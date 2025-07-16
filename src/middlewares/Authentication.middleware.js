@@ -39,45 +39,4 @@ const verifyAdmin=asynchandler(async(req,res,next)=>{
   }
 })
 
-// const verifyProvider=asynchandler(async(req,res,next)=>{
-//   if(req.user && req.user.role==="serviceProvider"){
-//     next();
-//   }
-//   else{
-//     throw new Apierror(401,"You are not logged in login first")
-//   }
-// })
-// const verifyProviderOrAdmin=asynchandler(async(req,res,next)=>{
-//   if(req.user.role==="admin" || req.user.role==="serviceProvider"){
-//     next();
-//   }
-//   else{
-//     throw new Apierror(401,"You are not logged in login as Service Provider or Admin first")
-//   }
-// })
-
-// const verifyCustomer=asynchandler(async(req,res,next)=>{
-//   const id=req.user._id;
-//   if(req.user && req.user.role==="customer"){
-//     const sellerinfo=await Sellers.findOne({User:id});
-//     if(!sellerinfo){
-//       throw new Apierror(400,"User not found");
-//     }
-//     req.seller=sellerinfo;
-//     next();
-//   }
-//   else{
-//     throw new Apierror(401,"You are not logged in login as seller first")
-//   }
-// })
-
-// const verifyAdminorCustomer=asynchandler(async(req,res,next)=>{
-//   if(req.user.role==="admin" || req.user.role==="serviceProvider"){
-//     next();
-//   }
-//   else{
-//     throw new Apierror(401,"You are not logged in login as Service Provider or Admin first")
-//   }
-// })
-
 export {verifyJWT,verifyAdmin}
