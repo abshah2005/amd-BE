@@ -35,15 +35,12 @@ router.route("/updatestep2").put(verifyJWT, updatePasswordStep2);
 router.route("/forgotPassword").post(forgotPassword);
 router.route("/resetPassword").put(resetPassword);
 
-// New multi-step registration routes
 router.route("/register/step1").post(registerStep1);
 router.route("/register/step2").put(registerStep2);
 router.route("/register/step3").put(upload.fields([{ name: "profilePic", maxCount: 1 }]), registerStep3);
 
-// Registration state check
 router.route("/register/state").get(getRegistrationState);
 
-// LinkedIn authentication routes
 router.route("/auth/linkedin/callback").post(linkedinCallback);
 router.route("/profile/linkedin").get(getLinkedInProfile);
 
