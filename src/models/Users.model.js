@@ -54,15 +54,14 @@ const UserSchema = new Schema(
         return this.isRegistrationComplete;
       }
     },
-    username: {
-      type: String,
-      unique: true,
-      trim: true,
-      lowercase: true,
-      required: function() {
-        return this.isRegistrationComplete;
-      }
-    },
+    // username: {
+    //   type: String,
+    //   trim: true,
+    //   lowercase: true,
+    //   required: function() {
+    //     return this.isRegistrationComplete;
+    //   }
+    // },
     profilePic: {
       type: String,
       default: null

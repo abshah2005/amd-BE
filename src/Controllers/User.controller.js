@@ -163,17 +163,19 @@ const registerStep2 = asynchandler(async (req, res) => {
 const registerStep3 = asynchandler(async (req, res) => {
   const { email, firstName, lastName } = req.body;
   const profilePicPath = req.files?.profilePic?.[0]?.path;
+  
 
   if (!email || !firstName || !lastName) {
     throw new Apierror(400, "Email, first name and last name are required");
   }
 
   let profilePicUrl = null;
+
   if (profilePicPath) {
     const uploadedPic = await uploadonCloudinary(profilePicPath);
-    profilePicUrl = uploadedPic?.url || null;
+    profilePicUrl = uploadedPic?.url || " ";
   }
-
+  console.log(profilePicUrl)
   // Generate username
   const baseUsername = `${firstName.toLowerCase()}${lastName.toLowerCase()}`;
   let username = baseUsername;
@@ -190,7 +192,6 @@ const registerStep3 = asynchandler(async (req, res) => {
   const updateFields = {
     firstName,
     lastName,
-    username,
     profilePic: profilePicUrl,
     registrationStep: 3,
     isRegistrationComplete: true

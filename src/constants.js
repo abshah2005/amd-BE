@@ -1,1 +1,1 @@
-export const DB_NAME='AB-FYP';
+export const DB_NAME='AskMeDirect2';
