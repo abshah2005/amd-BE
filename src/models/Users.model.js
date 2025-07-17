@@ -1,82 +1,192 @@
-import mongoose, { Schema, model } from "mongoose";
+import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
 const UserSchema = new Schema(
   {
-    username: {
-      type: String,
-      required: true,
-      unique: true,
-    },
+    // Authentication fields
     email: {
       type: String,
       required: true,
       unique: true,
+      trim: true,
+      lowercase: true,
+      match: [/\S+@\S+\.\S+/, 'is invalid']
     },
     password: {
       type: String,
-      required: true,
+      required: function() {
+        return this.authProvider === 'email';
+      },
+      minlength: 8
     },
-    role: {
+    authProvider: {
       type: String,
-      enum: ["admin", "user"],
-      default: "user",
+      enum: ['email', 'linkedin'],
+      default: 'email',
+      required: true
+    },
+    
+    // Registration progress tracking
+    registrationStep: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 3
+    },
+    isRegistrationComplete: {
+      type: Boolean,
+      default: false
+    },
+    
+    // Profile information
+    firstName: {
+      type: String,
+      trim: true,
+      required: function() {
+        return this.isRegistrationComplete;
+      }
+    },
+    lastName: {
+      type: String,
+      trim: true,
+      required: function() {
+        return this.isRegistrationComplete;
+      }
+    },
+    username: {
+      type: String,
+      unique: true,
+      trim: true,
+      lowercase: true,
+      required: function() {
+        return this.isRegistrationComplete;
+      }
     },
     profilePic: {
       type: String,
-      // required: true,
+      default: null
     },
+    
+    // Role information
+    role: {
+      type: String,
+      enum: ['admin', 'asker', 'professional'],
+      required: function() {
+        return this.registrationStep >= 2;
+      }
+    },
+    
+    // Authentication tokens
     refreshToken: {
       type: String,
+      select: false
     },
-    otp: { type: String },
-    otpExpiry: { type: Date },
-    resetToken: { type: String },
-    resetTokenExpiry: { type: Date },
+    
+    // OTP and password reset
+    otp: { 
+      type: String,
+      select: false
+    },
+    otpExpiry: { 
+      type: Date,
+      select: false
+    },
+    resetPasswordToken: { 
+      type: String,
+      select: false
+    },
+    resetPasswordExpires: { 
+      type: Date,
+      select: false
+    },
+    
+    // LinkedIn-specific fields
+    linkedinId: {
+      type: String,
+      unique: true,
+      sparse: true
+    },
+    linkedinProfileUrl: {
+      type: String
+    }
   },
-  { timestamps: true }
+  { 
+    timestamps: true,
+    toJSON: {
+      virtuals: true,
+      transform: function(doc, ret) {
+        delete ret.password;
+        delete ret.refreshToken;
+        return ret;
+      }
+    }
+  }
 );
 
-
-
-UserSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) {
-    return next();
-  }
-  this.password = await bcrypt.hash(this.password, 10);
+// Virtual for full name
+UserSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`;
 });
 
-UserSchema.methods.isPasswordCorrect = async function (password) {
+// Password hashing middleware
+UserSchema.pre("save", async function(next) {
+  if (!this.isModified("password")) return next();
+  
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Password verification method
+UserSchema.methods.isPasswordCorrect = async function(password) {
   return await bcrypt.compare(password, this.password);
 };
 
-UserSchema.methods.generateAccessToken = function () {
+// Token generation methods
+UserSchema.methods.generateAccessToken = function() {
   return jwt.sign(
     {
       _id: this._id,
-      email: this._email,
-      username: this._username,
+      email: this.email,
+      username: this.username,
+      role: this.role
     },
     process.env.ACCESS_TOKEN_SECRET,
-    {
-      expiresIn: process.env.ACCESS_TOKEN_EXPIRY,
-    }
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }
   );
 };
 
-UserSchema.methods.generateRefreshToken = function () {
+UserSchema.methods.generateRefreshToken = function() {
   return jwt.sign(
-    {
-      _id: this._id,
-      username: this.username,
-      email: this.email,
-    },
+    { _id: this._id },
     process.env.REFRESH_TOKEN_SECRET,
-    {
-      expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
-    }
+    { expiresIn: process.env.REFRESH_TOKEN_EXPIRY }
   );
+};
+
+// Helper method to get registration progress
+UserSchema.methods.getRegistrationProgress = function() {
+  return {
+    currentStep: this.registrationStep,
+    isComplete: this.isRegistrationComplete,
+    missingFields: this.isRegistrationComplete ? [] : this.getMissingFields()
+  };
+};
+
+// Method to check missing required fields
+UserSchema.methods.getMissingFields = function() {
+  const missing = [];
+  if (!this.firstName) missing.push('firstName');
+  if (!this.lastName) missing.push('lastName');
+  if (!this.username) missing.push('username');
+  if (this.authProvider === 'email' && !this.password) missing.push('password');
+  if (!this.role && this.registrationStep >= 2) missing.push('role');
+  return missing;
 };
 
 export const Users = mongoose.model("Users", UserSchema);
