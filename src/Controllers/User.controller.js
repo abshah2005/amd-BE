@@ -2,6 +2,7 @@ import { uploadonCloudinary } from "../utils/Fileupload.js";
 import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
+import axios from "axios"
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
@@ -52,17 +53,14 @@ const registerStep1 = asynchandler(async (req, res) => {
 
   const existingUser = await Users.findOne({ email });
   
-  // If user exists and registration is already complete, prevent re-registration
   if (existingUser && existingUser.isRegistrationComplete) {
     throw new Apierror(400, "User with this email already exists");
   }
 
-  // For LinkedIn auth
   if (authProvider === 'linkedin') {
     const tempPassword = Math.random().toString(36).slice(-10);
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     
-    // Update existing user or create new one
     const user = existingUser 
       ? await Users.findOneAndUpdate(
           { email },
@@ -255,103 +253,118 @@ const getRegistrationState = asynchandler(async (req, res) => {
 
 
 
-
-
-
-// LinkedIn OAuth Callback Handler
 const linkedinCallback = asynchandler(async (req, res) => {
-  // Extract LinkedIn profile data from the OAuth response
-  const { 
-    email,
-    given_name: firstName,
-    family_name: lastName,
-    picture: profilePicUrl,
-    sub: linkedinId,
-    linkedin_profile: linkedinProfileUrl 
-  } = req.body;
+  const { code } = req.body;
 
-  if (!email) {
-    throw new Apierror(400, "Email is required from LinkedIn");
+  if (!code) {
+    throw new Apierror(400, "Authorization code is required");
   }
 
-  // Check if user exists (maybe started registration with email)
-  let user = await Users.findOne({ email });
-
-  // Generate a temporary password for LinkedIn users
-  const tempPassword = Math.random().toString(36).slice(-10);
-  const hashedPassword = await bcrypt.hash(tempPassword, 10);
-
-  if (!user) {
-    // Create new user with LinkedIn info
-    user = await Users.create({
-      email,
-      firstName,
-      lastName,
-      password: hashedPassword,
-      profilePic: profilePicUrl,
-      authProvider: 'linkedin',
-      linkedinId,
-      linkedinProfileUrl,
-      registrationStep: 1 // Start at step 1
-    });
-  } else {
-    // Update existing user with LinkedIn info
-    // Preserve any existing data they may have entered
-    user = await Users.findOneAndUpdate(
-      { email },
-      {
-        $set: {
-          firstName: firstName || user.firstName,
-          lastName: lastName || user.lastName,
-          profilePic: profilePicUrl || user.profilePic,
-          authProvider: 'linkedin',
-          linkedinId,
-          linkedinProfileUrl,
-          password: hashedPassword // Reset password for LinkedIn auth
-        },
-        $setOnInsert: {
-          registrationStep: 1
-        }
-      },
-      { new: true, upsert: false }
+  try {
+    const tokenResponse = await axios.post(
+      'https://www.linkedin.com/oauth/v2/accessToken',
+      new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: process.env.LINKEDIN_CALLBACK_URL,
+        client_id: process.env.LINKEDIN_CLIENT_ID,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET,
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
-  }
 
-  // Check if registration is already complete
-  if (user.isRegistrationComplete) {
-    // If complete, log them in immediately
-    const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
-    
+    const accessToken = tokenResponse.data.access_token;
+
+    // 2. Fetch LinkedIn profile data
+    const profileResponse = await axios.get(
+      'https://api.linkedin.com/v2/me?projection=(id,firstName,lastName,profilePicture(displayImage~:playableStreams))',
+      { headers: { 'Authorization': `Bearer ${accessToken}` } }
+    );
+
+    // 3. Fetch LinkedIn email
+    const emailResponse = await axios.get(
+      'https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))',
+      { headers: { 'Authorization': `Bearer ${accessToken}` } }
+    );
+
+    // Extract data
+    const profileData = profileResponse.data;
+    const emailData = emailResponse.data;
+
+    const email = emailData.elements[0]['handle~'].emailAddress;
+    const firstName = profileData.firstName?.localized?.en_US || 'Unknown';
+    const lastName = profileData.lastName?.localized?.en_US || 'Unknown';
+    const profilePicUrl = profileData.profilePicture?.['displayImage~']?.elements?.[0]?.identifiers?.[0]?.identifier || '';
+
+    // 4. Check if user exists (by email or LinkedIn ID)
+    let user = await Users.findOne({ $or: [{ email }, { linkedinId }] });
+
+    // 5. Generate a temporary password (for users signing up via LinkedIn)
+    const tempPassword = Math.random().toString(36).slice(-10);
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+    if (!user) {
+      // Create new user with LinkedIn data
+      user = await Users.create({
+        email,
+        firstName,
+        lastName,
+        password: hashedPassword,
+        profilePic: profilePicUrl,
+        authProvider: 'linkedin',
+        registrationStep: 1, 
+      });
+    } else {
+      // Update existing user with LinkedIn data
+      user = await Users.findOneAndUpdate(
+        { _id: user._id },
+        {
+          $set: {
+            firstName: firstName || user.firstName,
+            lastName: lastName || user.lastName,
+            profilePic: profilePicUrl || user.profilePic,
+            authProvider: 'linkedin',
+            password: hashedPassword, 
+          },
+        },
+        { new: true }
+      );
+    }
+
+    // 6. Check if registration is complete
+    if (user.isRegistrationComplete) {
+      // Log them in immediately
+      const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
+      return res.status(200).json(new Apiresponse(
+        200,
+        { user, accessToken, refreshToken },
+        "LinkedIn login successful"
+      ));
+    }
+
+    // 7. Return LinkedIn data to continue registration
     return res.status(200).json(new Apiresponse(
       200,
       {
-        user: user.toObject(),
-        accessToken,
-        refreshToken,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profilePic: user.profilePic,
         currentStep: user.registrationStep,
-        isRegistrationComplete: true
+        authProvider: 'linkedin',
+        isRegistrationComplete: user.isRegistrationComplete,
       },
-      "LinkedIn login successful"
+      "LinkedIn authentication successful"
     ));
-  }
 
-  // Return the current registration state
-  return res.status(200).json(new Apiresponse(
-    200,
-    {
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      profilePic: user.profilePic,
-      currentStep: user.registrationStep,
-      authProvider: 'linkedin',
-      isRegistrationComplete: user.isRegistrationComplete
-    },
-    "LinkedIn authentication successful"
-  ));
+  } catch (error) {
+    console.error('LinkedIn OAuth error:', error.response?.data || error.message);
+    throw new Apierror(500, "LinkedIn authentication failed");
+  }
 });
 
-// LinkedIn Profile Getter (for frontend to retrieve LinkedIn data)
+
+
 const getLinkedInProfile = asynchandler(async (req, res) => {
   const { email } = req.query;
 
@@ -381,29 +394,6 @@ const getLinkedInProfile = asynchandler(async (req, res) => {
 
 
 
-
-
-
-
-
-
-
-
-const testSendMail = async () => {
-  try {
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: "abdullah03350904415@gmail.com",
-      subject: "Test Email",
-      html: "<p>This is a test email sent from your server.</p>",
-    };
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log("Test email sent successfully:", info.response);
-  } catch (error) {
-    console.error("Error sending test email:", error);
-  }
-};
 
 const sendOtp = async (user) => {
   const otp = ("" + Math.random()).substring(2, 6);
@@ -674,7 +664,6 @@ export {
   getCurrentUser,
   forgotPassword,
   resetPassword,
-  testSendMail,
   registerStep1,
   registerStep2,
   registerStep3,
