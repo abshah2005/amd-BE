@@ -3,7 +3,7 @@ import {DB_NAME} from "../constants.js"
 
 const connectDB=async()=>{
     try {
-        const connectioninstance=await mongoose.connect(`${process.env.MONGODB_URI}/${DB_NAME}`)
+        const connectioninstance=await mongoose.connect(`${process.env.MONGODB_URI}/${DB_NAME}?retryWrites=true&w=majority&appName=AskMeDirect2`)
     console.log(`\n mongodb connected successfully`);
     } catch (error) {
         console.log("Error : ",err);

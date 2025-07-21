@@ -1,13 +1,14 @@
-import { uploadonCloudinary } from "../utils/Fileupload.js";
+import { uploadOnS3 } from "../utils/Fileupload.js";
 import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
-import axios from "axios"
+import axios from "axios";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import { Users } from "../models/Users.model.js";
+import { sendEmail } from "../utils/Nodemailer.js";
 
 dotenv.config();
 
@@ -36,91 +37,88 @@ const generateAccessAndRefreshTokens = async (userId) => {
   }
 };
 
-
-
-
-
-
-
-
 const registerStep1 = asynchandler(async (req, res) => {
   const { email, password, authProvider } = req.body;
 
-  if (!email || (!password && authProvider === 'email')) {
-    throw new Apierror(400, "Email is required and password is required for email signup");
+  if (!email || (!password && authProvider === "email")) {
+    throw new Apierror(
+      400,
+      "Email is required and password is required for email signup"
+    );
   }
 
-
   const existingUser = await Users.findOne({ email });
-  
+
   if (existingUser && existingUser.isRegistrationComplete) {
     throw new Apierror(400, "User with this email already exists");
   }
 
-  if (authProvider === 'linkedin') {
+  if (authProvider === "linkedin") {
     const tempPassword = Math.random().toString(36).slice(-10);
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    
-    const user = existingUser 
+
+    const user = existingUser
       ? await Users.findOneAndUpdate(
           { email },
-          { 
-            authProvider: 'linkedin',
+          {
+            authProvider: "linkedin",
             password: hashedPassword,
-            $setOnInsert: { registrationStep: 1 } 
+            $setOnInsert: { registrationStep: 1 },
           },
           { new: true, upsert: true }
         )
       : await Users.create({
           email,
           password: hashedPassword,
-          authProvider: 'linkedin',
-          registrationStep: 1
+          authProvider: "linkedin",
+          registrationStep: 1,
         });
 
-    return res.status(200).json(new Apiresponse(
-      200, 
-      { 
-        email: user.email,
-        currentStep: user.registrationStep,
-        authProvider: 'linkedin',
-        isRegistrationComplete: user.isRegistrationComplete
-      }, 
-      "Authentication successful"
-    ));
+    return res.status(200).json(
+      new Apiresponse(
+        200,
+        {
+          email: user.email,
+          currentStep: user.registrationStep,
+          authProvider: "linkedin",
+          isRegistrationComplete: user.isRegistrationComplete,
+        },
+        "Authentication successful"
+      )
+    );
   }
 
-  // For email signup
   const hashedPassword = await bcrypt.hash(password, 10);
-  
-  // Update existing user or create new one
+
   const user = existingUser
     ? await Users.findOneAndUpdate(
         { email },
-        { 
+        {
           password: hashedPassword,
-          authProvider: 'email',
-          $setOnInsert: { registrationStep: 1 }
+          authProvider: "email",
+          $setOnInsert: { registrationStep: 1 },
         },
         { new: true, upsert: true }
       )
     : await Users.create({
         email,
         password: hashedPassword,
-        authProvider: 'email',
-        registrationStep: 1
+        authProvider: "email",
+        registrationStep: 1,
       });
 
-  return res.status(200).json(new Apiresponse(
-    200, 
-    { 
-      email: user.email,
-      currentStep: user.registrationStep,
-      authProvider: 'email',
-      isRegistrationComplete: user.isRegistrationComplete
-    }, 
-    "Step 1 completed"
-  ));
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        email: user.email,
+        currentStep: user.registrationStep,
+        authProvider: "email",
+        isRegistrationComplete: user.isRegistrationComplete,
+      },
+      "Step 1 completed"
+    )
+  );
 });
 
 const registerStep2 = asynchandler(async (req, res) => {
@@ -130,38 +128,44 @@ const registerStep2 = asynchandler(async (req, res) => {
     throw new Apierror(400, "Email is required");
   }
 
-  // Allow role update even if registration is complete
-  const updateFields = { 
-    registrationStep: 2,
-    role // This will be validated by the schema
-  };
-
-  const user = await Users.findOneAndUpdate(
-    { email },
-    updateFields,
-    { new: true }
-  );
+  const user = await Users.findOne({ email });
 
   if (!user) {
     throw new Apierror(404, "User not found - please complete step 1 first");
   }
 
-  return res.status(200).json(new Apiresponse(
-    200, 
-    { 
-      email: user.email,
-      role: user.role,
-      currentStep: user.registrationStep,
-      isRegistrationComplete: user.isRegistrationComplete
-    }, 
-    "Role updated successfully"
-  ));
+  let updateFields = {
+    role,
+    registrationStep: 2,
+  };
+
+  if (user.authProvider === "linkedin") {
+    updateFields.isRegistrationComplete = true;
+    updateFields.registrationStep = 3;
+  }
+
+  const updatedUser = await Users.findOneAndUpdate({ email }, updateFields, {
+    new: true,
+  });
+
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        email: updatedUser.email,
+        authProvider: updatedUser.authProvider, 
+        role: updatedUser.role,
+        currentStep: updatedUser.registrationStep,
+        isRegistrationComplete: updatedUser.isRegistrationComplete,
+      },
+      "Role updated successfully"
+    )
+  );
 });
 
 const registerStep3 = asynchandler(async (req, res) => {
   const { email, firstName, lastName } = req.body;
   const profilePicPath = req.files?.profilePic?.[0]?.path;
-  
 
   if (!email || !firstName || !lastName) {
     throw new Apierror(400, "Email, first name and last name are required");
@@ -173,15 +177,16 @@ const registerStep3 = asynchandler(async (req, res) => {
     const uploadedPic = await uploadonCloudinary(profilePicPath);
     profilePicUrl = uploadedPic?.url || " ";
   }
-  console.log(profilePicUrl)
-  // Generate username
+  console.log(profilePicUrl);
   const baseUsername = `${firstName.toLowerCase()}${lastName.toLowerCase()}`;
   let username = baseUsername;
   let counter = 1;
 
-  // Ensure username is unique
   while (true) {
-    const existingUser = await Users.findOne({ username, email: { $ne: email } });
+    const existingUser = await Users.findOne({
+      username,
+      email: { $ne: email },
+    });
     if (!existingUser) break;
     username = `${baseUsername}${counter}`;
     counter++;
@@ -192,32 +197,32 @@ const registerStep3 = asynchandler(async (req, res) => {
     lastName,
     profilePic: profilePicUrl,
     registrationStep: 3,
-    isRegistrationComplete: true
+    isRegistrationComplete: true,
   };
 
-  const updatedUser = await Users.findOneAndUpdate(
-    { email },
-    updateFields,
-    { new: true }
-  ).select("-password -refreshToken");
+  const updatedUser = await Users.findOneAndUpdate({ email }, updateFields, {
+    new: true,
+  }).select("-password -refreshToken");
 
-  // Generate tokens if registration is being completed
-  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(updatedUser._id);
+  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
+    updatedUser._id
+  );
 
-  return res.status(200).json(new Apiresponse(
-    200, 
-    { 
-      user: updatedUser,
-      accessToken,
-      refreshToken,
-      currentStep: updatedUser.registrationStep,
-      isRegistrationComplete: updatedUser.isRegistrationComplete
-    }, 
-    "Profile updated successfully"
-  ));
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        user: updatedUser,
+        accessToken,
+        refreshToken,
+        currentStep: updatedUser.registrationStep,
+        isRegistrationComplete: updatedUser.isRegistrationComplete,
+      },
+      "Profile updated successfully"
+    )
+  );
 });
 
-// New endpoint to get current registration state
 const getRegistrationState = asynchandler(async (req, res) => {
   const { email } = req.query;
 
@@ -225,33 +230,35 @@ const getRegistrationState = asynchandler(async (req, res) => {
     throw new Apierror(400, "Email is required");
   }
 
-  const user = await Users.findOne({ email })
-    .select("email registrationStep isRegistrationComplete role authProvider firstName lastName profilePic");
+  const user = await Users.findOne({ email }).select(
+    "email registrationStep isRegistrationComplete role authProvider firstName lastName profilePic"
+  );
 
   if (!user) {
-    return res.status(200).json(new Apiresponse(
-      200, 
-      { 
-        exists: false,
-        currentStep: 0
-      }, 
-      "No registration started with this email"
-    ));
+    return res.status(200).json(
+      new Apiresponse(
+        200,
+        {
+          exists: false,
+          currentStep: 0,
+        },
+        "No registration started with this email"
+      )
+    );
   }
 
-  return res.status(200).json(new Apiresponse(
-    200, 
-    { 
-      exists: true,
-      ...user.toObject(),
-      currentStep: user.registrationStep
-    }, 
-    "Registration state retrieved"
-  ));
-})
-
-
-
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        exists: true,
+        ...user.toObject(),
+        currentStep: user.registrationStep,
+      },
+      "Registration state retrieved"
+    )
+  );
+});
 
 const linkedinCallback = asynchandler(async (req, res) => {
   const { code } = req.body;
@@ -262,60 +269,49 @@ const linkedinCallback = asynchandler(async (req, res) => {
 
   try {
     const tokenResponse = await axios.post(
-      'https://www.linkedin.com/oauth/v2/accessToken',
+      "https://www.linkedin.com/oauth/v2/accessToken",
       new URLSearchParams({
-        grant_type: 'authorization_code',
+        grant_type: "authorization_code",
         code,
         redirect_uri: process.env.LINKEDIN_CALLBACK_URL,
         client_id: process.env.LINKEDIN_CLIENT_ID,
         client_secret: process.env.LINKEDIN_CLIENT_SECRET,
       }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
     );
 
     const accessToken = tokenResponse.data.access_token;
+    console.log(`Access Token here ${accessToken}`);
 
-    // 2. Fetch LinkedIn profile data
-    const profileResponse = await axios.get(
-      'https://api.linkedin.com/v2/me?projection=(id,firstName,lastName,profilePicture(displayImage~:playableStreams))',
-      { headers: { 'Authorization': `Bearer ${accessToken}` } }
+    const userInfoResponse = await axios.get(
+      "https://api.linkedin.com/v2/userinfo",
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
-    // 3. Fetch LinkedIn email
-    const emailResponse = await axios.get(
-      'https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))',
-      { headers: { 'Authorization': `Bearer ${accessToken}` } }
-    );
+    console.log("functioon reaches here");
+    const userInfo = userInfoResponse.data;
 
-    // Extract data
-    const profileData = profileResponse.data;
-    const emailData = emailResponse.data;
+    const email = userInfo.email;
+    const firstName = userInfo.given_name || userInfo.firstName || "Unknown";
+    const lastName = userInfo.family_name || userInfo.lastName || "Unknown";
+    const profilePicUrl = userInfo.picture || "";
 
-    const email = emailData.elements[0]['handle~'].emailAddress;
-    const firstName = profileData.firstName?.localized?.en_US || 'Unknown';
-    const lastName = profileData.lastName?.localized?.en_US || 'Unknown';
-    const profilePicUrl = profileData.profilePicture?.['displayImage~']?.elements?.[0]?.identifiers?.[0]?.identifier || '';
+    let user = await Users.findOne({ email });
 
-    // 4. Check if user exists (by email or LinkedIn ID)
-    let user = await Users.findOne({ $or: [{ email }, { linkedinId }] });
-
-    // 5. Generate a temporary password (for users signing up via LinkedIn)
     const tempPassword = Math.random().toString(36).slice(-10);
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     if (!user) {
-      // Create new user with LinkedIn data
       user = await Users.create({
         email,
         firstName,
         lastName,
         password: hashedPassword,
         profilePic: profilePicUrl,
-        authProvider: 'linkedin',
-        registrationStep: 1, 
+        authProvider: "linkedin",
+        registrationStep: 1,
       });
     } else {
-      // Update existing user with LinkedIn data
       user = await Users.findOneAndUpdate(
         { _id: user._id },
         {
@@ -323,47 +319,51 @@ const linkedinCallback = asynchandler(async (req, res) => {
             firstName: firstName || user.firstName,
             lastName: lastName || user.lastName,
             profilePic: profilePicUrl || user.profilePic,
-            authProvider: 'linkedin',
-            password: hashedPassword, 
+            authProvider: "linkedin",
+            password: hashedPassword,
           },
         },
         { new: true }
       );
     }
 
-    // 6. Check if registration is complete
     if (user.isRegistrationComplete) {
-      // Log them in immediately
-      const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
-      return res.status(200).json(new Apiresponse(
-        200,
-        { user, accessToken, refreshToken },
-        "LinkedIn login successful"
-      ));
+      const { accessToken, refreshToken } =
+        await generateAccessAndRefreshTokens(user._id);
+      return res
+        .status(200)
+        .json(
+          new Apiresponse(
+            200,
+            { user, accessToken, refreshToken },
+            "LinkedIn login successful"
+          )
+        );
     }
 
-    // 7. Return LinkedIn data to continue registration
-    return res.status(200).json(new Apiresponse(
-      200,
-      {
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        profilePic: user.profilePic,
-        currentStep: user.registrationStep,
-        authProvider: 'linkedin',
-        isRegistrationComplete: user.isRegistrationComplete,
-      },
-      "LinkedIn authentication successful"
-    ));
-
+    return res.status(200).json(
+      new Apiresponse(
+        200,
+        {
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          profilePic: user.profilePic,
+          currentStep: user.registrationStep,
+          authProvider: "linkedin",
+          isRegistrationComplete: user.isRegistrationComplete,
+        },
+        "LinkedIn authentication successful"
+      )
+    );
   } catch (error) {
-    console.error('LinkedIn OAuth error:', error.response?.data || error.message);
+    console.error(
+      "LinkedIn OAuth error:",
+      error.response?.data || error.message
+    );
     throw new Apierror(500, "LinkedIn authentication failed");
   }
 });
-
-
 
 const getLinkedInProfile = asynchandler(async (req, res) => {
   const { email } = req.query;
@@ -372,49 +372,36 @@ const getLinkedInProfile = asynchandler(async (req, res) => {
     throw new Apierror(400, "Email is required");
   }
 
-  const user = await Users.findOne({ email, authProvider: 'linkedin' })
-    .select('firstName lastName profilePic linkedinProfileUrl');
+  const user = await Users.findOne({ email, authProvider: "linkedin" }).select(
+    "firstName lastName profilePic linkedinProfileUrl"
+  );
 
   if (!user) {
     throw new Apierror(404, "No LinkedIn account found with this email");
   }
 
-  return res.status(200).json(new Apiresponse(
-    200,
-    {
-      firstName: user.firstName,
-      lastName: user.lastName,
-      profilePic: user.profilePic,
-      linkedinProfileUrl: user.linkedinProfileUrl
-    },
-    "LinkedIn profile data retrieved"
-  ));
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profilePic: user.profilePic,
+        linkedinProfileUrl: user.linkedinProfileUrl,
+      },
+      "LinkedIn profile data retrieved"
+    )
+  );
 });
-
-
-
-
-
-const sendOtp = async (user) => {
-  const otp = ("" + Math.random()).substring(2, 6);
-  user.otp = otp;
-  user.otpExpiry = Date.now() + 5 * 60 * 1000;
-  await user.save();
-
-  const mailOptions = {
-    from: process.env.EMAIL_USER,
-    to: user.email,
-    subject: "Your OTP for Sign-In",
-    html: `<p>Your OTP is: <b>${otp}</b></p>`,
-  };
-
-  await transporter.sendMail(mailOptions);
-};
 
 const Loginuser = asynchandler(async (req, res) => {
   const { email, username, password } = req.body;
+
   if (!email && !username) {
-    throw new Apierror(400, "Email or Username is required");
+    throw new Apierror(400, "Email or username is required");
+  }
+  if (!password) {
+    throw new Apierror(400, "Password is required");
   }
 
   const user = await Users.findOne({ $or: [{ email }, { username }] });
@@ -422,34 +409,47 @@ const Loginuser = asynchandler(async (req, res) => {
     throw new Apierror(400, "User not found, please sign up first");
   }
 
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
-  await sendOtp(user);
-  res.status(200).json({ message: "OTP sent to email" });
-});
-
-const verifyOtp = asynchandler(async (req, res) => {
-  const { email, otp } = req.body;
-  const user = await Users.findOne({ email });
-  if (!user) {
-    throw new Apierror(400, "User not found");
+  const isMatch = bcrypt.compare(password, user.password);
+  if (!isMatch) {
+    throw new Apierror(401, "Invalid credentials");
   }
-  if (user.otp !== otp || Date.now() > user.otpExpiry) {
-    throw new Apierror(400, "Invalid or expired OTP");
+
+  if (!user.isRegistrationComplete) {
+    return res.status(200).json(
+      new Apiresponse(
+        200,
+        {
+          email: user.email,
+          currentStep: user.registrationStep,
+          isRegistrationComplete: false,
+        },
+        "Complete registration process"
+      )
+    );
   }
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
     user._id
   );
-  res
-    .status(200)
-    .json(
-      new Apiresponse(
-        200,
-        { accessToken, refreshToken },
-        "Logged in successfully"
-      )
-    );
+
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        user: {
+          _id: user._id,
+          email: user.email,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          profilePic: user.profilePic,
+        },
+        accessToken,
+        refreshToken,
+      },
+      "Logged in successfully"
+    )
+  );
 });
 
 const LogoutUser = asynchandler(async (req, res) => {
@@ -535,93 +535,6 @@ const resetPassword = asynchandler(async (req, res) => {
   }
 });
 
-const updatePassword = asynchandler(async (req, res) => {
-  const { oldPassword, newPassword } = req.body;
-
-  if (!oldPassword || !newPassword) {
-    throw new Apierror(400, "Both old and new passwords are required");
-  }
-
-  const user = await Users.findById(req.user._id);
-  if (!user) {
-    throw new Apierror(400, "User not found");
-  }
-
-  const isMatch = await bcrypt.compare(oldPassword, user.password);
-  if (!isMatch) {
-    throw new Apierror(400, "Incorrect old password");
-  }
-
-  user.password = await bcrypt.hash(newPassword, 10);
-  await user.save();
-
-  res
-    .status(200)
-    .json(new Apiresponse(200, null, "Password updated successfully"));
-});
-
-const verifyEmailStep1 = asynchandler(async (req, res) => {
-  const { email } = req.body;
-
-  if (!email) {
-    throw new Apierror(400, "Email is required");
-  }
-
-  const user = await Users.findOne({ email }).select("-password");
-
-  if (!user) {
-    throw new Apierror(404, "No account found with this email");
-  }
-
-  res
-    .status(200)
-    .json(new Apiresponse(200, { email: user.email }, "Email verified"));
-});
-
-const updatePasswordStep2 = asynchandler(async (req, res) => {
-  const { email, oldPassword, newPassword } = req.body;
-
-  // 1. Validate input (email already verified in step 1)
-  if (!oldPassword || !newPassword) {
-    throw new Apierror(400, "Both old and new passwords are required");
-  }
-
-  // 2. Find user (email exists because step 1 passed)
-  const user = await Users.findOne({ email });
-  if (!user) {
-    throw new Apierror(404, "User account not found");
-  }
-
-  const isPasswordCorrect = await bcrypt.compare(oldPassword, user.password);
-  if (!isPasswordCorrect) {
-    throw new Apierror(401, "Current password is incorrect");
-  }
-
-  if (oldPassword === newPassword) {
-    throw new Apierror(
-      400,
-      "New password must be different from current password"
-    );
-  }
-
-  if (newPassword.length < 8) {
-    throw new Apierror(400, "Password must be at least 8 characters");
-  }
-
-  user.password = newPassword;
-  await user.save();
-
-  res
-    .status(200)
-    .json(
-      new Apiresponse(
-        200,
-        { email: user.email },
-        "Password updated successfully"
-      )
-    );
-});
-
 const updateInfo = asynchandler(async (req, res) => {
   const { name, username } = req.body;
 
@@ -654,12 +567,8 @@ const updateInfo = asynchandler(async (req, res) => {
 });
 
 export {
-  verifyEmailStep1,
-  updatePasswordStep2,
-  updatePassword,
   updateInfo,
   Loginuser,
-  verifyOtp,
   LogoutUser,
   getCurrentUser,
   forgotPassword,

@@ -1,24 +1,38 @@
-import { v2 as cloudinary } from "cloudinary";
-import fs from "fs";
-cloudinary.config({
-  cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:  process.env.CLOUDINARY_API_KEY,
-  api_secret:  process.env.CLOUDINARY_API_SECRET,
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
 });
 
-const uploadonCloudinary=async (localFilePath)=>{
+const uploadOnS3 = async (file) => {
+  if (!file) return null;
 
-    try {
-        if (!localFilePath) return null;
-        const response = await cloudinary.uploader.upload(localFilePath, {
-          resource_type: "auto",
-        });
-        fs.unlinkSync(localFilePath);
-        return response;
-      } catch (error) {
-        fs.unlinkSync(localFilePath);
-        return null;
-      }
+  const fileName = `${Date.now()}_${file.originalname}`;
+
+  const params = {
+    Bucket: process.env.AWS_BUCKET_NAME,
+    Key: fileName,
+    Body: file.buffer,
+    ContentType: file.mimetype,
+    // ACL: "public-read",
+  };
+
+  try {
+    await s3.send(new PutObjectCommand(params));
+    const url = `https://${params.Bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
+    return {
+      url,
+      key: fileName,
+      bucket: params.Bucket,
     };
+  } catch (error) {
+    console.error("S3 upload error:", error);
+    return null;
+  }
+};
 
-export {uploadonCloudinary};
+export { uploadOnS3 };

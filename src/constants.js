@@ -1,1 +1,1 @@
-export const DB_NAME='AskMeDirect2';
+export const DB_NAME='AskMeDirectTest';
