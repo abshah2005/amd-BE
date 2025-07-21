@@ -3,7 +3,7 @@ import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
 import axios from "axios";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
@@ -62,14 +62,14 @@ const registerStep1 = asynchandler(async (req, res) => {
           { email },
           {
             authProvider: "linkedin",
-            password: hashedPassword,
+            password: await bcrypt.hash(tempPassword, 10),
             $setOnInsert: { registrationStep: 1 },
           },
           { new: true, upsert: true }
         )
       : await Users.create({
           email,
-          password: hashedPassword,
+          password: tempPassword,
           authProvider: "linkedin",
           registrationStep: 1,
         });
@@ -88,13 +88,11 @@ const registerStep1 = asynchandler(async (req, res) => {
     );
   }
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-
   const user = existingUser
     ? await Users.findOneAndUpdate(
         { email },
         {
-          password: hashedPassword,
+          password: await bcrypt.hash(password, 10),
           authProvider: "email",
           $setOnInsert: { registrationStep: 1 },
         },
@@ -102,7 +100,7 @@ const registerStep1 = asynchandler(async (req, res) => {
       )
     : await Users.create({
         email,
-        password: hashedPassword,
+        password,
         authProvider: "email",
         registrationStep: 1,
       });
@@ -153,7 +151,7 @@ const registerStep2 = asynchandler(async (req, res) => {
       200,
       {
         email: updatedUser.email,
-        authProvider: updatedUser.authProvider, 
+        authProvider: updatedUser.authProvider,
         role: updatedUser.role,
         currentStep: updatedUser.registrationStep,
         isRegistrationComplete: updatedUser.isRegistrationComplete,
@@ -299,30 +297,31 @@ const linkedinCallback = asynchandler(async (req, res) => {
     let user = await Users.findOne({ email });
 
     const tempPassword = Math.random().toString(36).slice(-10);
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     if (!user) {
       user = await Users.create({
         email,
         firstName,
         lastName,
-        password: hashedPassword,
+        password: tempPassword,
         profilePic: profilePicUrl,
         authProvider: "linkedin",
         registrationStep: 1,
       });
     } else {
+      // Only update password if it doesn't exist
+      const updateFields = {
+        firstName: firstName || user.firstName,
+        lastName: lastName || user.lastName,
+        profilePic: profilePicUrl || user.profilePic,
+        authProvider: "linkedin",
+      };
+      if (!user.password) {
+        updateFields.password = await bcrypt.hash(tempPassword, 10); // hash here
+      }
       user = await Users.findOneAndUpdate(
         { _id: user._id },
-        {
-          $set: {
-            firstName: firstName || user.firstName,
-            lastName: lastName || user.lastName,
-            profilePic: profilePicUrl || user.profilePic,
-            authProvider: "linkedin",
-            password: hashedPassword,
-          },
-        },
+        { $set: updateFields },
         { new: true }
       );
     }
@@ -345,13 +344,7 @@ const linkedinCallback = asynchandler(async (req, res) => {
       new Apiresponse(
         200,
         {
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          profilePic: user.profilePic,
-          currentStep: user.registrationStep,
-          authProvider: "linkedin",
-          isRegistrationComplete: user.isRegistrationComplete,
+          user,
         },
         "LinkedIn authentication successful"
       )
@@ -395,21 +388,21 @@ const getLinkedInProfile = asynchandler(async (req, res) => {
 });
 
 const Loginuser = asynchandler(async (req, res) => {
-  const { email, username, password } = req.body;
+  const { email, password } = req.body;
 
-  if (!email && !username) {
-    throw new Apierror(400, "Email or username is required");
+  if (!email) {
+    throw new Apierror(400, "Email is required");
   }
   if (!password) {
     throw new Apierror(400, "Password is required");
   }
 
-  const user = await Users.findOne({ $or: [{ email }, { username }] });
+  const user = await Users.findOne({ $or: [{ email }] });
   if (!user) {
     throw new Apierror(400, "User not found, please sign up first");
   }
 
-  const isMatch = bcrypt.compare(password, user.password);
+  const isMatch = await user.isPasswordCorrect(password);
   if (!isMatch) {
     throw new Apierror(401, "Invalid credentials");
   }
@@ -493,7 +486,7 @@ const forgotPassword = asynchandler(async (req, res) => {
   user.resetPasswordExpires = Date.now() + 3600000;
   await user.save();
 
-  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+  const resetLink = `${process.env.FRONTEND_URL}/resetPassword?token=${resetToken}`;
 
   const mailOptions = {
     from: process.env.EMAIL_USER,
@@ -502,8 +495,7 @@ const forgotPassword = asynchandler(async (req, res) => {
     html: `<p>Click <a href="${resetLink}">here</a> to reset your password. This link will expire in 1 hour.</p>`,
   };
 
-  await transporter.sendMail(mailOptions);
-
+  await sendEmail(mailOptions.to, mailOptions.subject, mailOptions.html);
   res
     .status(200)
     .json(new Apiresponse(200, null, "Password reset link sent to email"));
@@ -522,7 +514,7 @@ const resetPassword = asynchandler(async (req, res) => {
       throw new Apierror(400, "Invalid or expired token");
     }
 
-    user.password = await bcrypt.hash(newPassword, 10);
+    user.password = newPassword;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();

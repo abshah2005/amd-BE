@@ -54,20 +54,11 @@ const UserSchema = new Schema(
         return this.isRegistrationComplete;
       }
     },
-    // username: {
-    //   type: String,
-    //   trim: true,
-    //   lowercase: true,
-    //   required: function() {
-    //     return this.isRegistrationComplete;
-    //   }
-    // },
     profilePic: {
       type: String,
       default: null
     },
     
-    // Role information
     role: {
       type: String,
       enum: ['admin', 'asker', 'professional'],
@@ -76,13 +67,16 @@ const UserSchema = new Schema(
       }
     },
     
-    // Authentication tokens
+  
     refreshToken: {
       type: String,
       select: false
     },
+    accessToken: {
+      type: String,
+      select: false
+    },
     
-    // OTP and password reset
     otp: { 
       type: String,
       select: false
@@ -100,7 +94,6 @@ const UserSchema = new Schema(
       select: false
     },
     
-    // LinkedIn-specific fields
     linkedinId: {
       type: String,
       unique: true,

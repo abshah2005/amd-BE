@@ -5,13 +5,13 @@ dotenv.config();
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-export const sendEmail = async (to, subject, text) => {
+export const sendEmail = async (to, subject, html) => {
   try {
     const msg = {
       to,
-      from: process.env.SENDGRID_FROM_EMAIL, 
+      from: process.env.SENDGRID_FROM_EMAIL,
       subject,
-      text,
+      html, 
     };
     await sgMail.send(msg);
     console.log(`Email sent to ${to}`);
