@@ -13,6 +13,7 @@ import {
   getRegistrationState,
   linkedinCallback,
   getLinkedInProfile,
+  uploadFile,
 } from "../Controllers/User.controller.js";
 import { upload } from "../middlewares/Multer.middleware.js";
 import { verifyJWT } from "../middlewares/Authentication.middleware.js";
@@ -22,6 +23,7 @@ const router = Router();
 router.route("/login").post(Loginuser);
 router.route("/logout").post(verifyJWT, LogoutUser);
 router.route("/getcurrent").get(verifyJWT, getCurrentUser);
+router.route("/upload").post(upload.single("file"), uploadFile);
 router.route("/updateinfo").put(verifyJWT, updateInfo);
 router.route("/forgotPassword").post(forgotPassword);
 router.route("/resetPassword").put(resetPassword);

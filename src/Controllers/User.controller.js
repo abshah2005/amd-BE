@@ -163,7 +163,7 @@ const registerStep2 = asynchandler(async (req, res) => {
 
 const registerStep3 = asynchandler(async (req, res) => {
   const { email, firstName, lastName } = req.body;
-  const profilePicPath = req.files?.profilePic?.[0]?.path;
+  const profilePicPath = req.files?.profilePic?.[0];
 
   if (!email || !firstName || !lastName) {
     throw new Apierror(400, "Email, first name and last name are required");
@@ -171,9 +171,10 @@ const registerStep3 = asynchandler(async (req, res) => {
 
   let profilePicUrl = null;
 
+
   if (profilePicPath) {
-    const uploadedPic = await uploadonCloudinary(profilePicPath);
-    profilePicUrl = uploadedPic?.url || " ";
+    const uploadedPic = await uploadOnS3(profilePicPath);
+    profilePicUrl = `https://${uploadedPic.bucket}.s3.amazonaws.com/${uploadedPic.key}` || " ";
   }
   console.log(profilePicUrl);
   const baseUsername = `${firstName.toLowerCase()}${lastName.toLowerCase()}`;
@@ -558,9 +559,30 @@ const updateInfo = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, updatedUser, "Profile updated successfully"));
 });
 
+const uploadFile = asynchandler(async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    throw new Apierror(400, "No file uploaded");
+  }
+
+  const uploadedFile = await uploadOnS3(file);
+  if (!uploadedFile) {
+    throw new Apierror(500, "File upload failed");
+  }
+
+  const publicUrl = `https://${uploadedFile.bucket}.s3.amazonaws.com/${uploadedFile.key}`;
+
+  res.status(200).json(new Apiresponse(
+    200,
+    { url: publicUrl, key: uploadedFile.key, bucket: uploadedFile.bucket },
+    "File uploaded successfully"
+  ));
+})
+
 export {
   updateInfo,
   Loginuser,
+  uploadFile,
   LogoutUser,
   getCurrentUser,
   forgotPassword,
