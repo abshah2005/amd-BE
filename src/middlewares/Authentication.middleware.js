@@ -30,6 +30,17 @@ const verifyJWT = asynchandler(async (req, res, next) => {
   }
 });
 
+export const trackActive = async (req, res, next) => {
+  try {
+    if (req.user && req.user._id) {
+      await Users.findByIdAndUpdate(req.user._id, { lastActiveAt: new Date(), isActive: true }, { new: false });
+    }
+  } catch (err) {
+    console.error("activeTracker error:", err.message);
+  }
+  next();
+};
+
 const verifyAdmin=asynchandler(async(req,res,next)=>{
   if(req.user && req.user.role==="admin"){
     next();

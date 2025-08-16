@@ -7,7 +7,11 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import mongoose from "mongoose";
 import { Users } from "../models/Users.model.js";
+import { Professional } from "../models/Professional.model.js";
+import { Asker } from "../models/Asker.model.js";
+import { Admin } from "../models/Admin.model.js";
 import { sendEmail } from "../utils/Nodemailer.js";
 
 dotenv.config();
@@ -120,7 +124,7 @@ const registerStep1 = asynchandler(async (req, res) => {
 });
 
 const registerStep2 = asynchandler(async (req, res) => {
-  const { email, role } = req.body;
+  const { email, role, isAdmin } = req.body;
 
   if (!email) {
     throw new Apierror(400, "Email is required");
@@ -142,9 +146,73 @@ const registerStep2 = asynchandler(async (req, res) => {
     updateFields.registrationStep = 3;
   }
 
+  // allow explicit admin creation via request body flag (for manual/testing via Postman)
+  if (isAdmin) {
+    updateFields.isAdmin = true;
+  }
+
   const updatedUser = await Users.findOneAndUpdate({ email }, updateFields, {
     new: true,
   });
+
+  if (!updatedUser) throw new Apierror(500, "Failed to update user role");
+
+  // Create role child documents immediately so frontend can toggle/switch without extra calls
+  // If role is professional we also create an Asker doc so professionals can act as askers
+  try {
+    if (role === "professional") {
+
+      if (!updatedUser.professional) {
+        const profDoc = await Professional.create({ user: updatedUser._id });
+        updatedUser.professional = profDoc._id;
+      }
+
+      if (!updatedUser.asker) {
+        const askerDoc = await Asker.create({ user: updatedUser._id });
+        updatedUser.asker = askerDoc._id;
+      }
+
+      // ensure roles array contains both
+      updatedUser.roles = Array.from(new Set([...(updatedUser.roles || []), "professional", "asker"]));
+    } else if (role === "asker") {
+      if (!updatedUser.asker) {
+        const askerDoc = await Asker.create({ user: updatedUser._id });
+        updatedUser.asker = askerDoc._id;
+      }
+      updatedUser.roles = Array.from(new Set([...(updatedUser.roles || []), "asker"]));
+    }
+
+    // If isAdmin flag provided or role is admin, create Admin doc and set flag
+    if (isAdmin || role === "admin") {
+      if (Admin) {
+        if (!updatedUser.admin) {
+          const adminDoc = await Admin.create({ user: updatedUser._id });
+          updatedUser.admin = adminDoc._id;
+        }
+      }
+      updatedUser.isAdmin = true;
+      updatedUser.roles = Array.from(new Set([...(updatedUser.roles || []), "admin"]));
+    }
+
+    await updatedUser.save();
+  } catch (err) {
+    // If child doc creation fails, log and continue — the user role was updated; return a warning
+    console.error("Error creating role child docs:", err);
+    return res.status(200).json(
+      new Apiresponse(
+        200,
+        {
+          email: updatedUser.email,
+          authProvider: updatedUser.authProvider,
+          role: updatedUser.role,
+          currentStep: updatedUser.registrationStep,
+          isRegistrationComplete: updatedUser.isRegistrationComplete,
+          warning: "Role set but failed to create all role documents on server",
+        },
+        "Role updated with warnings"
+      )
+    );
+  }
 
   return res.status(200).json(
     new Apiresponse(
@@ -162,7 +230,7 @@ const registerStep2 = asynchandler(async (req, res) => {
 });
 
 const registerStep3 = asynchandler(async (req, res) => {
-  const { email, firstName, lastName } = req.body;
+  const { email, firstName, lastName, selectedSpecializations } = req.body;
   const profilePicPath = req.files?.profilePic?.[0];
 
   if (!email || !firstName || !lastName) {
@@ -202,6 +270,23 @@ const registerStep3 = asynchandler(async (req, res) => {
   const updatedUser = await Users.findOneAndUpdate({ email }, updateFields, {
     new: true,
   }).select("-password -refreshToken");
+
+  // If user selected professional during registration and provided selectedSpecializations,
+  // create a Professional document and attach it to the user.
+  if (updatedUser.role === "professional" && Array.isArray(selectedSpecializations)) {
+    if (!updatedUser.professional) {
+      const profDoc = await Professional.create({
+        user: updatedUser._id,
+        selectedSpecializations,
+      });
+      updatedUser.professional = profDoc._id;
+      await updatedUser.save();
+    } else {
+      await Professional.findByIdAndUpdate(updatedUser.professional, {
+        $set: { selectedSpecializations },
+      });
+    }
+  }
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
     updatedUser._id
@@ -559,6 +644,36 @@ const updateInfo = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, updatedUser, "Profile updated successfully"));
 });
 
+
+const toggleActiveRole = asynchandler(async (req, res) => {
+  const { activeRole } = req.body; 
+  const user = await Users.findById(req.user._id);
+  if (!user) throw new Apierror(404, "User not found");
+
+  if (!activeRole) {
+    user.activeRole = null;
+    await user.save();
+    const sanitized = await Users.findById(user._id).select("-password -refreshToken");
+    return res.status(200).json(new Apiresponse(200, sanitized, "Active role cleared"));
+  }
+
+  const allowed = ["asker", "professional"];
+  if (!allowed.includes(activeRole)) throw new Apierror(400, "Invalid active role");
+
+  if (activeRole === "admin") {
+    if (!user.isAdmin) throw new Apierror(403, "Only admins can switch to admin active role");
+    await user.switchToAdmin();
+  } else if (activeRole === "professional") {
+    await user.switchToProfessional();
+  } else if (activeRole === "asker") {
+    await user.switchToAsker();
+  }
+
+  const updated = await Users.findById(user._id).select("-password -refreshToken");
+  return res.status(200).json(new Apiresponse(200, updated, "Active role updated"));
+});
+
+
 const uploadFile = asynchandler(async (req, res) => {
   const file = req.file;
   if (!file) {
@@ -576,7 +691,7 @@ const uploadFile = asynchandler(async (req, res) => {
     200,
     { url: publicUrl, key: uploadedFile.key, bucket: uploadedFile.bucket },
     "File uploaded successfully"
-  ));
+));
 })
 
 export {
@@ -590,6 +705,7 @@ export {
   registerStep1,
   registerStep2,
   registerStep3,
+  toggleActiveRole,
   getRegistrationState,
   linkedinCallback,
   getLinkedInProfile,

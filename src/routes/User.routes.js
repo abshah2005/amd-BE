@@ -14,6 +14,7 @@ import {
   linkedinCallback,
   getLinkedInProfile,
   uploadFile,
+  toggleActiveRole,
 } from "../Controllers/User.controller.js";
 import { upload } from "../middlewares/Multer.middleware.js";
 import { verifyJWT } from "../middlewares/Authentication.middleware.js";
@@ -32,6 +33,7 @@ router.route("/register/step1").post(registerStep1);
 router.route("/register/step2").put(registerStep2);
 router.route("/register/step3").put(upload.fields([{ name: "profilePic", maxCount: 1 }]), registerStep3);
 
+router.route("/role/active").post(verifyJWT, toggleActiveRole);
 router.route("/register/state").get(getRegistrationState);
 
 router.route("/auth/linkedin/callback").post(linkedinCallback);

@@ -2,6 +2,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import userRoute from "./routes/User.routes.js";
+import specializationRoute from "./routes/Specializations.route.js";
 
 
 const app = express();
@@ -21,6 +22,7 @@ app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(express.static("public"));
 app.use(cookieParser());
 app.use("/api/users", userRoute);
+app.use("/api/specializations", specializationRoute);
 
 
 app.use((err, req, res, next) => {
