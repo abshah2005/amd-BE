@@ -1,4 +1,5 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand,DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { Image } from "../models/Image.model.js";
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION,
@@ -35,4 +36,28 @@ const uploadOnS3 = async (file) => {
   }
 };
 
-export { uploadOnS3 };
+const deleteFromS3 = async (bucket, key) => {
+  if (!bucket || !key) return false;
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    return true;
+  } catch (err) {
+    console.error("S3 delete error:", err);
+    throw err;
+  }
+};
+
+const deleteImageAndObject = async (imageId) => {
+  if (!imageId) return { success: false };
+  const img = await Image.findById(imageId);
+  if (!img) return { success: false };
+  try {
+    await deleteFromS3(img.bucket, img.key);
+  } catch (err) {
+    console.warn("Failed to delete object from S3, will still remove DB record:", err.message || err);
+  }
+  await Image.deleteOne({ _id: img._id });
+  return { success: true, removedImage: img.toObject() };
+};
+
+export { uploadOnS3,deleteFromS3, deleteImageAndObject };

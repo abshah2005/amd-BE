@@ -15,6 +15,8 @@ import {
   getLinkedInProfile,
   uploadFile,
   toggleActiveRole,
+  registerStep5,
+  registerStep4,
 } from "../Controllers/User.controller.js";
 import { upload } from "../middlewares/Multer.middleware.js";
 import { verifyJWT } from "../middlewares/Authentication.middleware.js";
@@ -32,6 +34,8 @@ router.route("/resetPassword").put(resetPassword);
 router.route("/register/step1").post(registerStep1);
 router.route("/register/step2").put(registerStep2);
 router.route("/register/step3").put(upload.fields([{ name: "profilePic", maxCount: 1 }]), registerStep3);
+router.route("/register/step4").put(upload.fields([{ name: "profilePic", maxCount: 1 }]), registerStep4);
+router.route("/register/step5").put(registerStep5);
 
 router.route("/role/active").post(verifyJWT, toggleActiveRole);
 router.route("/register/state").get(getRegistrationState);

@@ -146,7 +146,6 @@ const registerStep2 = asynchandler(async (req, res) => {
     updateFields.registrationStep = 3;
   }
 
-  // allow explicit admin creation via request body flag (for manual/testing via Postman)
   if (isAdmin) {
     updateFields.isAdmin = true;
   }
@@ -157,11 +156,8 @@ const registerStep2 = asynchandler(async (req, res) => {
 
   if (!updatedUser) throw new Apierror(500, "Failed to update user role");
 
-  // Create role child documents immediately so frontend can toggle/switch without extra calls
-  // If role is professional we also create an Asker doc so professionals can act as askers
   try {
     if (role === "professional") {
-
       if (!updatedUser.professional) {
         const profDoc = await Professional.create({ user: updatedUser._id });
         updatedUser.professional = profDoc._id;
@@ -172,17 +168,19 @@ const registerStep2 = asynchandler(async (req, res) => {
         updatedUser.asker = askerDoc._id;
       }
 
-      // ensure roles array contains both
-      updatedUser.roles = Array.from(new Set([...(updatedUser.roles || []), "professional", "asker"]));
+      updatedUser.roles = Array.from(
+        new Set([...(updatedUser.roles || []), "professional", "asker"])
+      );
     } else if (role === "asker") {
       if (!updatedUser.asker) {
         const askerDoc = await Asker.create({ user: updatedUser._id });
         updatedUser.asker = askerDoc._id;
       }
-      updatedUser.roles = Array.from(new Set([...(updatedUser.roles || []), "asker"]));
+      updatedUser.roles = Array.from(
+        new Set([...(updatedUser.roles || []), "asker"])
+      );
     }
 
-    // If isAdmin flag provided or role is admin, create Admin doc and set flag
     if (isAdmin || role === "admin") {
       if (Admin) {
         if (!updatedUser.admin) {
@@ -191,12 +189,13 @@ const registerStep2 = asynchandler(async (req, res) => {
         }
       }
       updatedUser.isAdmin = true;
-      updatedUser.roles = Array.from(new Set([...(updatedUser.roles || []), "admin"]));
+      updatedUser.roles = Array.from(
+        new Set([...(updatedUser.roles || []), "admin"])
+      );
     }
 
     await updatedUser.save();
   } catch (err) {
-    // If child doc creation fails, log and continue — the user role was updated; return a warning
     console.error("Error creating role child docs:", err);
     return res.status(200).json(
       new Apiresponse(
@@ -230,19 +229,19 @@ const registerStep2 = asynchandler(async (req, res) => {
 });
 
 const registerStep3 = asynchandler(async (req, res) => {
-  const { email, firstName, lastName, selectedSpecializations } = req.body;
+  const { email, firstName, lastName } = req.body;
   const profilePicPath = req.files?.profilePic?.[0];
 
   if (!email || !firstName || !lastName) {
     throw new Apierror(400, "Email, first name and last name are required");
   }
-
   let profilePicUrl = null;
-
 
   if (profilePicPath) {
     const uploadedPic = await uploadOnS3(profilePicPath);
-    profilePicUrl = `https://${uploadedPic.bucket}.s3.amazonaws.com/${uploadedPic.key}` || " ";
+    profilePicUrl =
+      `https://${uploadedPic.bucket}.s3.amazonaws.com/${uploadedPic.key}` ||
+      " ";
   }
   console.log(profilePicUrl);
   const baseUsername = `${firstName.toLowerCase()}${lastName.toLowerCase()}`;
@@ -282,19 +281,15 @@ const registerStep3 = asynchandler(async (req, res) => {
     await updatedUser.save();
   }
 
-  if (updatedUser.role === "professional" && Array.isArray(selectedSpecializations)) {
+  if (updatedUser.role === "professional") {
     if (!updatedUser.professional) {
       const profDoc = await Professional.create({
         user: updatedUser._id,
-        selectedSpecializations,
-        activeRole: updatedUser.activeRole || updatedUser.role
       });
       updatedUser.professional = profDoc._id;
+      updatedUser.activeRole = "professional";
       await updatedUser.save();
     } else {
-      await Professional.findByIdAndUpdate(updatedUser.professional, {
-        $set: { selectedSpecializations },
-      });
     }
   }
 
@@ -315,6 +310,139 @@ const registerStep3 = asynchandler(async (req, res) => {
       "Profile updated successfully"
     )
   );
+});
+
+const registerStep4 = asynchandler(async (req, res) => {
+  const { email } = req.body;
+  const professionalPayload = req.body.professional || {};
+  const profilePicPath = req.files?.profilePic?.[0];
+
+  if (!email) throw new Apierror(400, "Email is required");
+
+  const user = await Users.findOne({ email });
+  if (!user) throw new Apierror(404, "User not found");
+  if (user.role !== "professional")
+    throw new Apierror(400, "Step 4 is only for professionals");
+
+  let profilePicUrl = null;
+  if (profilePicPath) {
+    const uploaded = await uploadOnS3(profilePicPath);
+    if (uploaded)
+      profilePicUrl = `https://${uploaded.bucket}.s3.amazonaws.com/${uploaded.key}`;
+  }
+
+  const userUpdate = {};
+  if (req.body.firstName) userUpdate.firstName = req.body.firstName;
+  if (req.body.lastName) userUpdate.lastName = req.body.lastName;
+  if (profilePicUrl) userUpdate.profilePic = profilePicUrl;
+  if (Object.keys(userUpdate).length) {
+    await Users.findByIdAndUpdate(
+      user._id,
+      { $set: userUpdate },
+      { new: true, runValidators: true }
+    );
+  }
+
+  const allowed = [
+    "title",
+    "about",
+    "selectedSpecializations",
+    "exampleQuestions",
+    "languages",
+    "priceRangeLow",
+    "priceRangeHigh",
+    "currency",
+    "profilePicture",
+    "location",
+    "country",
+    "tags",
+    "subcategories",
+    "entityType",
+    "firmName",
+    "verified",
+    "featured",
+  ];
+
+  const profData = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(professionalPayload, key))
+      profData[key] = professionalPayload[key];
+    else if (Object.prototype.hasOwnProperty.call(req.body, key))
+      profData[key] = req.body[key];
+  }
+  if (profilePicUrl && !profData.profilePicture)
+    profData.profilePicture = profilePicUrl;
+
+  let professionalDoc = null;
+  if (Object.keys(profData).length) {
+    if (user.professional) {
+      professionalDoc = await Professional.findByIdAndUpdate(
+        user.professional,
+        { $set: profData },
+        { new: true, runValidators: true }
+      );
+    } else {
+      professionalDoc = await Professional.create({
+        user: user._id,
+        ...profData,
+      });
+      user.professional = professionalDoc._id;
+      await user.save();
+    }
+  } else if (user.professional) {
+    professionalDoc = await Professional.findById(user.professional);
+  }
+
+  const sanitizedUser = await Users.findById(user._id).select(
+    "-password -refreshToken"
+  );
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(
+        200,
+        { user: sanitizedUser, professional: professionalDoc },
+        "Step 4 saved"
+      )
+    );
+});
+
+const registerStep5 = asynchandler(async (req, res) => {
+  const { email } = req.body;
+  const paymentList = Array.isArray(req.body.paymentMethods)
+    ? req.body.paymentMethods
+    : req.body.paymentMethod
+    ? [req.body.paymentMethod]
+    : req.body.payment
+    ? [req.body.payment]
+    : [];
+
+  if (!email) throw new Apierror(400, "Email is required");
+
+  const user = await Users.findOne({ email });
+  if (!user) throw new Apierror(404, "User not found");
+  if (user.role !== "professional")
+    throw new Apierror(400, "Step 5 is only for professionals");
+
+  const created = [];
+  for (const p of paymentList) {
+    if (!p || typeof p !== "object") continue;
+    const pm = await user.addPaymentMethod(p);
+    created.push(pm);
+  }
+
+  const sanitizedUser = await Users.findById(user._id).select(
+    "-password -refreshToken"
+  );
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(
+        200,
+        { user: sanitizedUser, paymentMethods: created },
+        "Step 5 payment methods saved"
+      )
+    );
 });
 
 const getRegistrationState = asynchandler(async (req, res) => {
@@ -626,6 +754,8 @@ const resetPassword = asynchandler(async (req, res) => {
 const updateInfo = asynchandler(async (req, res) => {
   const { name, username } = req.body;
 
+  const professionalPayload = req.body.professional || {};
+
   if (!name || !username) {
     throw new Apierror(400, "Both name and username are required");
   }
@@ -649,29 +779,84 @@ const updateInfo = asynchandler(async (req, res) => {
     throw new Apierror(404, "User not found");
   }
 
+  let updatedProfessional = null;
+  if (updatedUser.activeRole === "professional") {
+    const allowed = [
+      "title",
+      "about",
+      "selectedSpecializations",
+      "exampleQuestions",
+      "languages",
+      "priceRangeLow",
+      "priceRangeHigh",
+      "currency",
+      "profilePicture",
+      "location",
+      "country",
+      "tags",
+      "subcategories",
+      "verified",
+      "featured",
+    ];
+
+    const toSet = {};
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(professionalPayload, key)) {
+        toSet[key] = professionalPayload[key];
+      } else if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+        toSet[key] = req.body[key];
+      }
+    }
+
+    if (Object.keys(toSet).length) {
+      if (updatedUser.professional) {
+        updatedProfessional = await Professional.findByIdAndUpdate(
+          updatedUser.professional,
+          { $set: toSet },
+          { new: true, runValidators: true }
+        );
+      } else {
+        updatedProfessional = await Professional.create({
+          user: updatedUser._id,
+          ...toSet,
+        });
+        updatedUser.professional = updatedProfessional._id;
+        await updatedUser.save();
+      }
+    }
+  }
+
+  const payload = { user: updatedUser };
+  if (updatedProfessional) payload.professional = updatedProfessional;
+
   res
     .status(200)
-    .json(new Apiresponse(200, updatedUser, "Profile updated successfully"));
+    .json(new Apiresponse(200, payload, "Profile updated successfully"));
 });
 
-
 const toggleActiveRole = asynchandler(async (req, res) => {
-  const { activeRole } = req.body; 
+  const { activeRole } = req.body;
   const user = await Users.findById(req.user._id);
   if (!user) throw new Apierror(404, "User not found");
 
   if (!activeRole) {
     user.activeRole = null;
     await user.save();
-    const sanitized = await Users.findById(user._id).select("-password -refreshToken");
-    return res.status(200).json(new Apiresponse(200, sanitized, "Active role cleared"));
+    const sanitized = await Users.findById(user._id).select(
+      "-password -refreshToken"
+    );
+    return res
+      .status(200)
+      .json(new Apiresponse(200, sanitized, "Active role cleared"));
   }
 
   const allowed = ["asker", "professional"];
-  if (!allowed.includes(activeRole)) throw new Apierror(400, "Invalid active role");
+  if (!allowed.includes(activeRole))
+    throw new Apierror(400, "Invalid active role");
 
   if (activeRole === "admin") {
-    if (!user.isAdmin) throw new Apierror(403, "Only admins can switch to admin active role");
+    if (!user.isAdmin)
+      throw new Apierror(403, "Only admins can switch to admin active role");
     await user.switchToAdmin();
   } else if (activeRole === "professional") {
     await user.switchToProfessional();
@@ -679,10 +864,13 @@ const toggleActiveRole = asynchandler(async (req, res) => {
     await user.switchToAsker();
   }
 
-  const updated = await Users.findById(user._id).select("-password -refreshToken");
-  return res.status(200).json(new Apiresponse(200, updated, "Active role updated"));
+  const updated = await Users.findById(user._id).select(
+    "-password -refreshToken"
+  );
+  return res
+    .status(200)
+    .json(new Apiresponse(200, updated, "Active role updated"));
 });
-
 
 const uploadFile = asynchandler(async (req, res) => {
   const file = req.file;
@@ -697,15 +885,21 @@ const uploadFile = asynchandler(async (req, res) => {
 
   const publicUrl = `https://${uploadedFile.bucket}.s3.amazonaws.com/${uploadedFile.key}`;
 
-  res.status(200).json(new Apiresponse(
-    200,
-    { url: publicUrl, key: uploadedFile.key, bucket: uploadedFile.bucket },
-    "File uploaded successfully"
-));
-})
+  res
+    .status(200)
+    .json(
+      new Apiresponse(
+        200,
+        { url: publicUrl, key: uploadedFile.key, bucket: uploadedFile.bucket },
+        "File uploaded successfully"
+      )
+    );
+});
 
 export {
   updateInfo,
+  registerStep4,
+  registerStep5,
   Loginuser,
   uploadFile,
   LogoutUser,

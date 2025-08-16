@@ -4,7 +4,6 @@ import jwt from "jsonwebtoken";
 
 const UserSchema = new Schema(
   {
-    // Authentication fields
     email: {
       type: String,
       required: true,
@@ -27,7 +26,6 @@ const UserSchema = new Schema(
       required: true,
     },
 
-    // Registration progress tracking
     registrationStep: {
       type: Number,
       default: 0,
@@ -39,7 +37,6 @@ const UserSchema = new Schema(
       default: false,
     },
 
-    // Profile information
     firstName: {
       type: String,
       trim: true,
@@ -67,7 +64,6 @@ const UserSchema = new Schema(
       },
     },
 
-    // NEW: references to role-specific child docs (nullable)
     admin: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
@@ -84,21 +80,18 @@ const UserSchema = new Schema(
       default: null,
     },
 
-    // NEW: multi-role support (keep role for backward compatibility; roles array allows multiple)
     roles: {
       type: [String],
       enum: ["admin", "asker", "professional"],
       default: [],
     },
 
-    // NEW: admin flag
     isAdmin: {
       type: Boolean,
       default: false,
       index: true,
     },
 
-    // NEW: active role used by frontend toggle (e.g. 'asker' or 'professional')
     activeRole: {
       type: String,
       enum: ["asker", "professional"],
@@ -106,7 +99,6 @@ const UserSchema = new Schema(
       index: true,
     },
 
-    // NEW: active tracking
     lastActiveAt: {
       type: Date,
       default: null,
@@ -152,6 +144,9 @@ const UserSchema = new Schema(
     linkedinProfileUrl: {
       type: String,
     },
+    paymentMethods: [
+      { type: mongoose.Schema.Types.ObjectId, ref: 'PaymentMethod' }
+    ],
   },
   {
     timestamps: true,
@@ -166,12 +161,10 @@ const UserSchema = new Schema(
   }
 );
 
-// Virtual for full name
 UserSchema.virtual("fullName").get(function () {
   return `${this.firstName} ${this.lastName}`;
 });
 
-// Password hashing middleware
 UserSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
 
@@ -184,12 +177,10 @@ UserSchema.pre("save", async function (next) {
   }
 });
 
-// Password verification method
 UserSchema.methods.isPasswordCorrect = async function (password) {
   return await bcrypt.compare(password, this.password);
 };
 
-// Token generation methods
 UserSchema.methods.generateAccessToken = function () {
   return jwt.sign(
     {
@@ -215,7 +206,6 @@ UserSchema.methods.generateRefreshToken = function () {
   });
 };
 
-// Helper method to get registration progress
 UserSchema.methods.getRegistrationProgress = function () {
   return {
     currentStep: this.registrationStep,
@@ -224,7 +214,6 @@ UserSchema.methods.getRegistrationProgress = function () {
   };
 };
 
-// Method to check missing required fields
 UserSchema.methods.getMissingFields = function () {
   const missing = [];
   if (!this.firstName) missing.push("firstName");
@@ -235,14 +224,12 @@ UserSchema.methods.getMissingFields = function () {
   return missing;
 };
 
-// Helper methods to manage roles and role documents
 UserSchema.methods.addRole = async function (role, opts = {}) {
   role = String(role);
   if (!["admin", "asker", "professional"].includes(role))
     throw new Error("Invalid role");
-  if (this.roles.includes(role)) return this; // already present
+  if (this.roles.includes(role)) return this; 
 
-  // start a session if not provided for safer multi-doc operations
   let session = opts.session || null;
   let createdSession = false;
   try {
@@ -365,6 +352,111 @@ UserSchema.methods.switchToAdmin = async function () {
   this.activeRole = "admin";
   await this.save();
   return this;
+};
+
+UserSchema.methods.getPaymentMethods = async function (opts = {}) {
+  const PaymentMethod = mongoose.model('PaymentMethod');
+  const methods = await PaymentMethod.find({ user: this._id }).lean();
+  const sanitized = methods.map((m) => {
+    const obj = JSON.parse(JSON.stringify(m));
+    delete obj.providerToken;
+    delete obj.providerCustomerId;
+    if (obj.rawCard) {
+      delete obj.rawCard?.number;
+      delete obj.rawCard?.cvc;
+      delete obj.rawCard?.expiryMMYY;
+    }
+    return obj;
+  });
+  return sanitized.sort((a, b) => (a.isDefault === b.isDefault ? (new Date(b.createdAt) - new Date(a.createdAt)) : (a.isDefault ? -1 : 1)));
+};
+
+UserSchema.methods.addPaymentMethod = async function (paymentData = {}) {
+  const PaymentMethod = mongoose.model('PaymentMethod');
+  // if new method should be default, clear existing defaults
+  if (paymentData.isDefault) {
+    await PaymentMethod.updateMany({ user: this._id }, { $set: { isDefault: false } });
+  }
+
+  // create the payment method document
+  const pm = await PaymentMethod.create({
+    user: this._id,
+    provider: paymentData.provider || 'card',
+    providerToken: paymentData.providerToken,
+    providerCustomerId: paymentData.providerCustomerId,
+    type: paymentData.type || 'card',
+    card: paymentData.card || {},
+    rawCard: paymentData.rawCard || {},
+    billingDetails: paymentData.billingDetails || {},
+    isDefault: !!paymentData.isDefault,
+    verified: !!paymentData.verified,
+    metadata: paymentData.metadata || {}
+  });
+
+  // ensure user holds a reference
+  if (!this.paymentMethods) this.paymentMethods = [];
+  this.paymentMethods.push(pm._id);
+
+  // if not explicitly set default and no default exists, make this default
+  if (!paymentData.isDefault) {
+    const existingDefault = await PaymentMethod.findOne({ user: this._id, isDefault: true });
+    if (!existingDefault) {
+      pm.isDefault = true;
+      await pm.save();
+    }
+  }
+
+  await this.save();
+
+  const obj = pm.toObject ? pm.toObject() : JSON.parse(JSON.stringify(pm));
+  delete obj.providerToken; delete obj.providerCustomerId; if (obj.rawCard) { delete obj.rawCard.number; delete obj.rawCard.cvc; delete obj.rawCard.expiryMMYY; }
+  return obj;
+};
+
+UserSchema.methods.setDefaultPaymentMethod = async function (paymentMethodId) {
+  const PaymentMethod = mongoose.model('PaymentMethod');
+  const pm = await PaymentMethod.findOne({ _id: paymentMethodId, user: this._id });
+  if (!pm) throw new Error('Payment method not found');
+
+  await PaymentMethod.updateMany({ user: this._id }, { $set: { isDefault: false } });
+  pm.isDefault = true;
+  await pm.save();
+
+  const obj = pm.toObject ? pm.toObject() : JSON.parse(JSON.stringify(pm));
+  delete obj.providerToken; delete obj.providerCustomerId; if (obj.rawCard) { delete obj.rawCard.number; delete obj.rawCard.cvc; delete obj.rawCard.expiryMMYY; }
+  return obj;
+};
+
+UserSchema.methods.removePaymentMethod = async function (paymentMethodId) {
+  const PaymentMethod = mongoose.model('PaymentMethod');
+  const pm = await PaymentMethod.findOne({ _id: paymentMethodId, user: this._id });
+  if (!pm) throw new Error('Payment method not found');
+  const wasDefault = !!pm.isDefault;
+
+  await PaymentMethod.deleteOne({ _id: paymentMethodId, user: this._id });
+
+  // remove reference from user
+  if (this.paymentMethods && this.paymentMethods.length) {
+    this.paymentMethods = this.paymentMethods.filter((id) => String(id) !== String(paymentMethodId));
+    await this.save();
+  }
+
+  // if it was default, promote the newest payment method to default
+  if (wasDefault) {
+    const replacement = await PaymentMethod.findOne({ user: this._id }).sort({ createdAt: -1 });
+    if (replacement) {
+      replacement.isDefault = true;
+      await replacement.save();
+    }
+  }
+
+  return true;
+};
+
+UserSchema.methods.getDefaultPaymentMethod = function () {
+  // NOTE: keep this synchronous signature for backwards compatibility but return null
+  // If callers expect the default, they should use getPaymentMethods or setDefaultPaymentMethod.
+  return null;
 };
 
 export const Users = mongoose.model("Users", UserSchema);
