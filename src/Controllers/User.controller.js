@@ -271,13 +271,23 @@ const registerStep3 = asynchandler(async (req, res) => {
     new: true,
   }).select("-password -refreshToken");
 
-  // If user selected professional during registration and provided selectedSpecializations,
-  // create a Professional document and attach it to the user.
+  if (!updatedUser.activeRole) {
+    if (updatedUser.isAdmin) {
+      updatedUser.activeRole = "admin";
+    } else if (updatedUser.role === "professional") {
+      updatedUser.activeRole = "professional";
+    } else if (updatedUser.role === "asker") {
+      updatedUser.activeRole = "asker";
+    }
+    await updatedUser.save();
+  }
+
   if (updatedUser.role === "professional" && Array.isArray(selectedSpecializations)) {
     if (!updatedUser.professional) {
       const profDoc = await Professional.create({
         user: updatedUser._id,
         selectedSpecializations,
+        activeRole: updatedUser.activeRole || updatedUser.role
       });
       updatedUser.professional = profDoc._id;
       await updatedUser.save();

@@ -238,7 +238,8 @@ UserSchema.methods.getMissingFields = function () {
 // Helper methods to manage roles and role documents
 UserSchema.methods.addRole = async function (role, opts = {}) {
   role = String(role);
-  if (!["admin", "asker", "professional"].includes(role)) throw new Error("Invalid role");
+  if (!["admin", "asker", "professional"].includes(role))
+    throw new Error("Invalid role");
   if (this.roles.includes(role)) return this; // already present
 
   // start a session if not provided for safer multi-doc operations
@@ -301,6 +302,7 @@ UserSchema.methods.addRole = async function (role, opts = {}) {
 
     this.roles.push(role);
 
+
     await this.save({ session: session || undefined });
 
     if (createdSession) await session.commitTransaction();
@@ -330,7 +332,8 @@ UserSchema.methods.setActiveRole = async function (role) {
     await this.save();
     return this;
   }
-  if (!["asker", "professional"].includes(role)) throw new Error("Invalid active role");
+  if (!["asker", "professional"].includes(role))
+    throw new Error("Invalid active role");
 
   if (!this.roles.includes(role)) {
     // automatically add role (and its child doc) so frontend toggle works seamlessly
