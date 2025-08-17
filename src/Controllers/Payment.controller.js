@@ -2,10 +2,8 @@ import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
 import { Users } from "../models/Users.model.js";
-import "../models/Payment.model.js"; // register PaymentMethod model
-import mongoose from 'mongoose';
+import { PaymentMethod } from "../models/Payment.model.js";
 
-const PaymentMethod = mongoose.model('PaymentMethod');
 
 const listPaymentMethods = asynchandler(async (req, res) => {
   const user = await Users.findById(req.user?._id);
@@ -15,7 +13,6 @@ const listPaymentMethods = asynchandler(async (req, res) => {
   return res.status(200).json(new Apiresponse(200, methods, 'Payment methods retrieved'));
 });
 
-// Add a payment method
 const createPaymentMethod = asynchandler(async (req, res) => {
   const paymentData = req.body.paymentData || req.body;
   const user = await Users.findById(req.user?._id);
@@ -25,7 +22,27 @@ const createPaymentMethod = asynchandler(async (req, res) => {
   return res.status(201).json(new Apiresponse(201, created, 'Payment method added'));
 });
 
-// Update a payment method (fields allowed: card, billingDetails, metadata, verified, isDefault)
+const createPaymentMethods = asynchandler(async (req, res) => {
+  const paymentList = req.body.paymentData || req.body.paymentMethods || req.body;
+  if (!Array.isArray(paymentList)) throw new Apierror(400, 'paymentMethods must be an array');
+
+  const user = await Users.findById(req.user?._id);
+  if (!user) throw new Apierror(404, 'User not found');
+
+  const created = [];
+  for (const paymentData of paymentList) {
+    const pm = await user.addPaymentMethod(paymentData);
+    const obj = pm.toObject ? pm.toObject() : JSON.parse(JSON.stringify(pm));
+    delete obj.providerToken;
+    delete obj.providerCustomerId;
+    if (obj.rawCard) { delete obj.rawCard?.number; delete obj.rawCard?.cvc; delete obj.rawCard?.expiryMMYY; }
+    created.push(obj);
+  }
+
+  return res.status(201).json(new Apiresponse(201, created, 'Payment methods added'));
+});
+
+
 const updatePaymentMethod = asynchandler(async (req, res) => {
   const id = req.params.id;
   if (!id) throw new Apierror(400, 'id is required');
@@ -81,5 +98,6 @@ export {
   updatePaymentMethod,
   setDefault,
   removePaymentMethod,
+  createPaymentMethods
 };
 

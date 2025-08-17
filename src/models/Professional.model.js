@@ -41,7 +41,7 @@ const ProfessionalSchema = new mongoose.Schema(
     exampleQuestions: [String],
     languages: [String],
     country: [String],
-
+    deliveryTime: { type: Number, default: 7 }, 
     verified: { type: Boolean, default: false },
     featured: { type: Boolean, default: false },
     rating: { type: Number, default: 0 },

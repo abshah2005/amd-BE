@@ -1,0 +1,386 @@
+import mongoose from "mongoose";
+import { asynchandler } from "../utils/Asynchandler.js";
+import { Apiresponse } from "../utils/Apiresponse.js";
+import { Apierror } from "../utils/Apierror.js";
+import { Professional } from "../models/Professional.model.js";
+import { Users } from "../models/Users.model.js";
+import { Asker } from "../models/Asker.model.js";
+
+const userPublicSelect = {
+  "user.firstName": 1,
+  "user.lastName": 1,
+  "user.profilePic": 1,
+  "user.email": 1,
+};
+
+const parseSort = (sortStr) => {
+  const s = String(sortStr || "-rating").trim();
+  const out = {};
+  if (s.startsWith("-")) out[s.slice(1)] = -1;
+  else if (s.startsWith("+")) out[s.slice(1)] = 1;
+  else out[s] = 1;
+  return out;
+};
+
+const listProfessionals = asynchandler(async (req, res) => {
+  const {
+    page = 1,
+    limit = 20,
+    q,
+    tag,
+    category,
+    minPrice,
+    maxPrice,
+    featured,
+    country,
+    sort = "-rating",
+  } = req.query;
+
+  const pageNum = Math.max(1, Number(page));
+  const lim = Math.max(1, Math.min(100, Number(limit)));
+  const skip = (pageNum - 1) * lim;
+  const sortObj = parseSort(sort);
+
+  const profMatch = {};
+  if (q) {
+    const re = new RegExp(String(q).trim(), "i");
+    profMatch.$or = [
+      { title: re },
+      { about: re },
+      { tags: re },
+      { subcategories: re },
+      { associated: re },
+    ];
+  }
+  if (tag) profMatch.tags = String(tag);
+  if (country) profMatch.country = String(country);
+  if (featured !== undefined) profMatch.featured = String(featured) === "true";
+  if (minPrice) profMatch.priceRangeLow = { $gte: Number(minPrice) };
+  if (maxPrice) profMatch.priceRangeHigh = { $lte: Number(maxPrice) };
+
+  if (category) {
+    if (mongoose.Types.ObjectId.isValid(String(category))) {
+      profMatch["selectedSpecializations.specialization"] =
+        mongoose.Types.ObjectId(category);
+    } else {
+      profMatch.$or = profMatch.$or || [];
+      profMatch.$or.push(
+        { "selectedSpecializations.category": String(category) },
+        { tags: String(category) }
+      );
+    }
+  }
+
+
+  const pipeline = [
+    { $match: profMatch },
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "user",
+      },
+    },
+    { $unwind: "$user" },
+    {
+      $match: {
+        "user.roles": "professional",
+        "user.activeRole": "professional",
+      },
+    },
+    {
+      $facet: {
+        data: [
+          { $sort: sortObj },
+          { $skip: skip },
+          { $limit: lim },
+          {
+            $project: {
+              _id: 1,
+              title: 1,
+              userId: "$user._id",
+              email: "$user.email",
+              profilePic: "$user.profilePic",
+              firstName: "$user.firstName",
+              lastName: "$user.lastName",
+              tags: 1,
+              entityType: 1,
+              deliveryTime: 1,
+              firmName: 1,
+              exampleQuestions: 1,
+              languages: 1,
+              country: 1,
+              priceRangeLow: 1,
+              priceRangeHigh: 1,
+              verified: 1,
+              featured: 1,
+              rating: 1,
+              ratingCount: 1,
+              categories: {
+                $cond: [
+                  { $isArray: "$selectedSpecializations" },
+                  {
+                    $map: {
+                      input: "$selectedSpecializations",
+                      as: "s",
+                      in: { $toString: "$$s.specialization" },
+                    },
+                  },
+                  [],
+                ],
+              },
+            },
+          },
+        ],
+        total: [{ $count: "count" }],
+      },
+    },
+  ];
+
+  const aggResult = await Professional.aggregate(pipeline).allowDiskUse(true);
+  const data = aggResult[0].data || [];
+  const total =
+    (aggResult[0].total &&
+      aggResult[0].total[0] &&
+      aggResult[0].total[0].count) ||
+    0;
+
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(
+        200,
+        { results: data, page: pageNum, limit: lim, total },
+        "Professionals retrieved"
+      )
+    );
+});
+
+const getProfessionalById = asynchandler(async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    throw new Apierror(400, "Invalid professional id");
+
+  const prof = await Professional.findById(id)
+    .populate({
+      path: "user",
+      select: "firstName lastName profilePic email roles activeRole",
+    })
+    .lean();
+  if (!prof) throw new Apierror(404, "Professional not found");
+
+  // optional enforcement: uncomment to only return if user.activeRole === 'professional' && user.roles includes 'professional'
+  // if (!(Array.isArray(prof.user?.roles) && prof.user.roles.includes('professional') && prof.user.activeRole === 'professional')) {
+  //   throw new Apierror(404, "Professional not available");
+  // }
+
+  if (prof.user) {
+    delete prof.user.refreshToken;
+    delete prof.user.accessToken;
+  }
+
+  return res
+    .status(200)
+    .json(new Apiresponse(200, prof, "Professional profile retrieved"));
+});
+
+const getTopProfessionals = asynchandler(async (req, res) => {
+  const limit = Math.min(50, Number(req.query.limit || 6));
+  const docs = await Professional.aggregate([
+    { $match: { featured: true } },
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "user",
+      },
+    },
+    { $unwind: "$user" },
+    {
+      $match: {
+        "user.roles": "professional",
+        "user.activeRole": "professional",
+      },
+    },
+    { $sort: { rating: -1, ratingCount: -1 } },
+    { $limit: limit },
+    {
+      $project: {
+        _id: 1,
+        title: 1,
+        tags: 1,
+        rating: 1,
+        ratingCount: 1,
+        user: {
+          firstName: "$user.firstName",
+          lastName: "$user.lastName",
+          profilePic: "$user.profilePic",
+          email: "$user.email",
+          _id: "$user._id",
+        },
+      },
+    },
+  ]).allowDiskUse(true);
+
+  return res
+    .status(200)
+    .json(new Apiresponse(200, docs, "Top professionals retrieved"));
+});
+
+const getProfessionalsBySpecialization = asynchandler(async (req, res) => {
+  const { specializationId } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(specializationId))
+    throw new Apierror(400, "Invalid specialization id");
+
+  const limit = Number(req.query.limit || 50);
+  const docs = await Professional.aggregate([
+    {
+      $match: {
+        "selectedSpecializations.specialization":
+          mongoose.Types.ObjectId(specializationId),
+      },
+    },
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "user",
+      },
+    },
+    { $unwind: "$user" },
+    {
+      $match: {
+        "user.roles": "professional",
+        "user.activeRole": "professional",
+      },
+    },
+    { $limit: limit },
+    {
+      $project: {
+        _id: 1,
+        title: 1,
+        tags: 1,
+        user: {
+          firstName: "$user.firstName",
+          lastName: "$user.lastName",
+          profilePic: "$user.profilePic",
+          email: "$user.email",
+          _id: "$user._id",
+        },
+      },
+    },
+  ]).allowDiskUse(true);
+
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(200, docs, "Professionals by specialization retrieved")
+    );
+});
+
+const listAskers = asynchandler(async (req, res) => {
+  const { page = 1, limit = 20, q } = req.query;
+  const pageNum = Math.max(1, Number(page));
+  const lim = Math.max(1, Math.min(100, Number(limit)));
+  const skip = (pageNum - 1) * lim;
+
+  const match = {};
+  if (q) {
+    const re = new RegExp(String(q).trim(), "i");
+    match.$or = [{ "user.firstName": re }, { "user.lastName": re }];
+  }
+
+  const pipeline = [
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "user",
+      },
+    },
+    { $unwind: "$user" },
+    {
+      $match: {
+        "user.roles": "asker",
+        "user.activeRole": "asker",
+        ...(match.$or ? { $or: match.$or } : {}),
+      },
+    },
+    {
+      $facet: {
+        data: [
+          { $sort: { createdAt: -1 } },
+          { $skip: skip },
+          { $limit: lim },
+          {
+            $project: {
+              _id: 1,
+              firstName: "$user.firstName",
+              lastName: "$user.lastName",
+              profilePic: "$user.profilePic",
+              email: "$user.email",
+              userId: "$user._id",
+              createdAt: 1,
+            },
+          },
+        ],
+        total: [{ $count: "count" }],
+      },
+    },
+  ];
+
+  const aggResult = await Asker.aggregate(pipeline).allowDiskUse(true);
+  const data = aggResult[0].data || [];
+  const total =
+    (aggResult[0].total &&
+      aggResult[0].total[0] &&
+      aggResult[0].total[0].count) ||
+    0;
+
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(
+        200,
+        { results: data, page: pageNum, limit: lim, total },
+        "Askers retrieved"
+      )
+    );
+});
+
+const getAskerById = asynchandler(async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    throw new Apierror(400, "Invalid asker id");
+
+  const a = await Asker.findById(id)
+    .populate({
+      path: "user",
+      select: "firstName lastName profilePic email roles activeRole",
+    })
+    .lean();
+  if (!a) throw new Apierror(404, "Asker not found");
+  if (
+    !(
+      Array.isArray(a.user?.roles) &&
+      a.user.roles.includes("asker") &&
+      a.user.activeRole === "asker"
+    )
+  ) {
+    throw new Apierror(404, "Asker not available");
+  }
+  return res.status(200).json(new Apiresponse(200, a, "Asker retrieved"));
+});
+
+export {
+  listProfessionals,
+  getProfessionalById,
+  getTopProfessionals,
+  getProfessionalsBySpecialization,
+  listAskers,
+  getAskerById,
+};

@@ -349,6 +349,7 @@ const registerStep4 = asynchandler(async (req, res) => {
     "selectedSpecializations",
     "exampleQuestions",
     "languages",
+    "deliveryTime",
     "priceRangeLow",
     "priceRangeHigh",
     "currency",
