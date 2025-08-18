@@ -31,6 +31,7 @@ const listProfessionals = asynchandler(async (req, res) => {
     category,
     minPrice,
     maxPrice,
+    verified,
     featured,
     country,
     sort = "-rating",
@@ -41,35 +42,114 @@ const listProfessionals = asynchandler(async (req, res) => {
   const skip = (pageNum - 1) * lim;
   const sortObj = parseSort(sort);
 
-  const profMatch = {};
+  // Build match clauses (supports multiple filters; multi-values are comma separated)
+  const matchClauses = [];
+
   if (q) {
     const re = new RegExp(String(q).trim(), "i");
-    profMatch.$or = [
-      { title: re },
-      { about: re },
-      { tags: re },
-      { subcategories: re },
-      { associated: re },
-    ];
+    matchClauses.push({
+      $or: [
+        { title: re },
+        { about: re },
+        { tags: re },
+        { subcategories: re },
+        { associated: re },
+      ],
+    });
   }
-  if (tag) profMatch.tags = String(tag);
-  if (country) profMatch.country = String(country);
-  if (featured !== undefined) profMatch.featured = String(featured) === "true";
-  if (minPrice) profMatch.priceRangeLow = { $gte: Number(minPrice) };
-  if (maxPrice) profMatch.priceRangeHigh = { $lte: Number(maxPrice) };
 
-  if (category) {
-    if (mongoose.Types.ObjectId.isValid(String(category))) {
-      profMatch["selectedSpecializations.specialization"] =
-        mongoose.Types.ObjectId(category);
-    } else {
-      profMatch.$or = profMatch.$or || [];
-      profMatch.$or.push(
-        { "selectedSpecializations.category": String(category) },
-        { tags: String(category) }
-      );
+  // tags: comma separated -> require all selected tags to be present
+  if (req.query.tags) {
+    const tagsArr = String(req.query.tags)
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (tagsArr.length) matchClauses.push({ tags: { $all: tagsArr } });
+  } else if (tag) {
+    // backward-compat single tag param
+    matchClauses.push({ tags: String(tag) });
+  }
+
+  if (country || req.query.country) {
+    const countries = req.query.country
+      ? String(req.query.country).split(",").map((c) => c.trim()).filter(Boolean)
+      : [String(country)];
+    if (countries.length) matchClauses.push({ country: { $in: countries } });
+  }
+
+  if (featured !== undefined) matchClauses.push({ featured: String(featured) === "true" });
+
+  if (minPrice) matchClauses.push({ priceRangeLow: { $gte: Number(minPrice) } });
+  if (maxPrice) matchClauses.push({ priceRangeHigh: { $lte: Number(maxPrice) } });
+
+  // delivery: comma separated thresholds -> accept if deliveryTime <= any selected threshold
+  if (req.query.delivery) {
+    const deliveryArr = String(req.query.delivery)
+      .split(",")
+      .map((d) => Number(d))
+      .filter((n) => !Number.isNaN(n));
+    if (deliveryArr.length) {
+      matchClauses.push({
+        $or: deliveryArr.map((d) => ({ deliveryTime: { $lte: d } })),
+      });
     }
   }
+
+  // rating: comma separated thresholds -> accept if rating >= any threshold
+  if (req.query.rating) {
+    const ratingArr = String(req.query.rating)
+      .split(",")
+      .map((r) => Number(r))
+      .filter((n) => !Number.isNaN(n));
+    if (ratingArr.length) {
+      matchClauses.push({
+        $or: ratingArr.map((r) => ({ rating: { $gte: r } })),
+      });
+    }
+  }
+
+  // languages: require all selected languages (frontend uses language.every)
+  if (req.query.language) {
+    const langs = String(req.query.language).split(",").map((l) => l.trim()).filter(Boolean);
+    if (langs.length) matchClauses.push({ languages: { $all: langs } });
+  }
+
+  // verified boolean
+  if (req.query.verified !== undefined) {
+    const v = req.query.verified === "true" || req.query.verified === true;
+    matchClauses.push({ verified: v });
+  } else if (verified !== undefined) {
+    matchClauses.push({ verified: String(verified) === "true" });
+  }
+
+  // selected category: can be ObjectId (specialization id) or a string category name
+  if (req.query.category) {
+    const cat = String(req.query.category);
+    if (mongoose.Types.ObjectId.isValid(cat)) {
+      matchClauses.push({ "selectedSpecializations.specialization": new mongoose.Types.ObjectId(cat) });
+    } else {
+      matchClauses.push({
+        $or: [
+          { "selectedSpecializations.category": cat },
+          { tags: cat },
+        ],
+      });
+    }
+  } else if (category) {
+    if (mongoose.Types.ObjectId.isValid(String(category))) {
+      matchClauses.push({ "selectedSpecializations.specialization": new mongoose.Types.ObjectId(String(category)) });
+    } else {
+      matchClauses.push({
+        $or: [
+          { "selectedSpecializations.category": String(category) },
+          { tags: String(category) },
+        ],
+      });
+    }
+  }
+
+  // create final profMatch as $and of clauses (if none - match all)
+  const profMatch = matchClauses.length ? { $and: matchClauses } : {};
 
   var ans=20;
 
