@@ -71,6 +71,7 @@ const listProfessionals = asynchandler(async (req, res) => {
     }
   }
 
+  var ans=20;
 
   const pipeline = [
     { $match: profMatch },
@@ -112,9 +113,15 @@ const listProfessionals = asynchandler(async (req, res) => {
               languages: 1,
               country: 1,
               priceRangeLow: 1,
+              about:1,
+              currency:1,
               priceRangeHigh: 1,
+              isActive:"$user.isActive",
               verified: 1,
+              joinedDate:"$createdAt",
               featured: 1,
+              totalAnswers: { $literal: ans },
+              totalEarnings: { $literal: ans },
               rating: 1,
               ratingCount: 1,
               categories: {
@@ -169,11 +176,6 @@ const getProfessionalById = asynchandler(async (req, res) => {
     })
     .lean();
   if (!prof) throw new Apierror(404, "Professional not found");
-
-  // optional enforcement: uncomment to only return if user.activeRole === 'professional' && user.roles includes 'professional'
-  // if (!(Array.isArray(prof.user?.roles) && prof.user.roles.includes('professional') && prof.user.activeRole === 'professional')) {
-  //   throw new Apierror(404, "Professional not available");
-  // }
 
   if (prof.user) {
     delete prof.user.refreshToken;
