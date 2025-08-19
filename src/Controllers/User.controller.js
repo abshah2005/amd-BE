@@ -528,21 +528,22 @@ const linkedinCallback = asynchandler(async (req, res) => {
         email,
         firstName,
         lastName,
+        activeRole:user.role,
         password: tempPassword,
         profilePic: profilePicUrl,
         authProvider: "linkedin",
         registrationStep: 1,
       });
     } else {
-      // Only update password if it doesn't exist
       const updateFields = {
-        firstName: firstName || user.firstName,
-        lastName: lastName || user.lastName,
-        profilePic: profilePicUrl || user.profilePic,
+        firstName:  user.firstName,
+        lastName:  user.lastName,
+        activeRole:user.role,
+        profilePic: user.profilePic,
         authProvider: "linkedin",
       };
       if (!user.password) {
-        updateFields.password = await bcrypt.hash(tempPassword, 10); // hash here
+        updateFields.password = await bcrypt.hash(tempPassword, 10); 
       }
       user = await Users.findOneAndUpdate(
         { _id: user._id },
@@ -753,26 +754,26 @@ const resetPassword = asynchandler(async (req, res) => {
 });
 
 const updateInfo = asynchandler(async (req, res) => {
-  const { name, username } = req.body;
-
+  const { firstName, lastName } = req.body;
   const professionalPayload = req.body.professional || {};
+  const profilePicPath = req.files?.profilePic?.[0];
 
-  if (!name || !username) {
-    throw new Apierror(400, "Both name and username are required");
+  let profilePicUrl = null;
+  if (profilePicPath) {
+    const uploaded = await uploadOnS3(profilePicPath);
+    if (uploaded) {
+      profilePicUrl = `https://${uploaded.bucket}.s3.amazonaws.com/${uploaded.key}`;
+    }
   }
 
-  const existingUser = await Users.findOne({
-    username,
-    _id: { $ne: req.user._id },
-  });
-
-  if (existingUser) {
-    throw new Apierror(400, "Username already taken");
-  }
+  const userUpdate = {};
+  if (firstName) userUpdate.firstName = firstName;
+  if (lastName) userUpdate.lastName = lastName;
+  if (profilePicUrl) userUpdate.profilePic = profilePicUrl;
 
   const updatedUser = await Users.findByIdAndUpdate(
     req.user._id,
-    { name, username },
+    { $set: userUpdate },
     { new: true, runValidators: true }
   ).select("-password -refreshToken");
 
@@ -798,6 +799,9 @@ const updateInfo = asynchandler(async (req, res) => {
       "subcategories",
       "verified",
       "featured",
+      "deliveryTime",
+      "entityType",
+      "firmName",
     ];
 
     const toSet = {};
@@ -808,6 +812,9 @@ const updateInfo = asynchandler(async (req, res) => {
         toSet[key] = req.body[key];
       }
     }
+
+    // ensure profilePicture is set from uploaded pic when not provided explicitly
+    if (profilePicUrl && !toSet.profilePicture) toSet.profilePicture = profilePicUrl;
 
     if (Object.keys(toSet).length) {
       if (updatedUser.professional) {
@@ -824,15 +831,15 @@ const updateInfo = asynchandler(async (req, res) => {
         updatedUser.professional = updatedProfessional._id;
         await updatedUser.save();
       }
+    } else if (updatedUser.professional) {
+      updatedProfessional = await Professional.findById(updatedUser.professional);
     }
   }
 
   const payload = { user: updatedUser };
   if (updatedProfessional) payload.professional = updatedProfessional;
 
-  res
-    .status(200)
-    .json(new Apiresponse(200, payload, "Profile updated successfully"));
+  res.status(200).json(new Apiresponse(200, payload, "Profile updated successfully"));
 });
 
 const toggleActiveRole = asynchandler(async (req, res) => {

@@ -27,7 +27,7 @@ router.route("/login").post(Loginuser);
 router.route("/logout").post(verifyJWT, LogoutUser);
 router.route("/getcurrent").get(verifyJWT, getCurrentUser);
 router.route("/upload").post(upload.single("file"), uploadFile);
-router.route("/updateinfo").put(verifyJWT, updateInfo);
+router.route("/updateinfo").put(verifyJWT, upload.fields([{name:"profilePic",maxCount:1}]),updateInfo);
 router.route("/forgotPassword").post(forgotPassword);
 router.route("/resetPassword").put(resetPassword);
 
