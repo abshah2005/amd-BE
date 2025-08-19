@@ -94,7 +94,7 @@ const UserSchema = new Schema(
 
     activeRole: {
       type: String,
-      enum: ["asker", "professional"],
+      enum: ["asker", "professional","admin"],
       default: null,
       index: true,
     },
