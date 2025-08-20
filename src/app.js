@@ -5,7 +5,7 @@ import userRoute from "./routes/User.routes.js";
 import specializationRoute from "./routes/Specializations.route.js";
 import paymentRoute from "./routes/Payment.routes.js";
 import publicProfileRoute from "./routes/PublicProfiles.routes.js";
-
+import dashboardRoute from "./routes/Dashboard.routes.js";
 
 const app = express();
 
@@ -27,6 +27,7 @@ app.use("/api/users", userRoute);
 app.use("/api/users/payments", paymentRoute);
 app.use("/api/specializations", specializationRoute);
 app.use("/api/public", publicProfileRoute);
+app.use("/api/admin/dashboard", dashboardRoute);
 
 
 app.use((err, req, res, next) => {

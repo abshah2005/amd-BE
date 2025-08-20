@@ -75,7 +75,7 @@ ProfessionalSchema.pre('save', function(next) {
     // include existing backward-compatible subcategories field as well
     if (Array.isArray(this.subcategories)) this.subcategories.forEach((sc) => { if (sc) subcats.push(String(sc).trim()); });
 
-    this.tags = Array.from(new Set(subcats.filter(Boolean)));
+    // this.tags = Array.from(new Set(subcats.filter(Boolean)));
 
     next();
   } catch (err) {
@@ -102,10 +102,10 @@ ProfessionalSchema.pre('findOneAndUpdate', function (next) {
       set.subcategories.forEach((sc) => { if (sc) subcats.push(String(sc).trim()); });
     }
 
-    const tags = Array.from(new Set(subcats.filter(Boolean)));
+    // const tags = Array.from(new Set(subcats.filter(Boolean)));
 
     if (!update.$set) update.$set = {};
-    update.$set.tags = tags;
+    // update.$set.tags = tags;
 
     this.setUpdate(update);
     next();

@@ -314,7 +314,9 @@ const registerStep3 = asynchandler(async (req, res) => {
 
 const registerStep4 = asynchandler(async (req, res) => {
   const { email } = req.body;
-  const professionalPayload = req.body.professional || {};
+  const professionalPayload = typeof req.body.professional === "string"
+  ? JSON.parse(req.body.professional)
+  : req.body.professional || {};
   const profilePicPath = req.files?.profilePic?.[0];
 
   if (!email) throw new Apierror(400, "Email is required");

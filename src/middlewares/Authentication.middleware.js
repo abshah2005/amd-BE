@@ -21,6 +21,10 @@ const verifyJWT = asynchandler(async (req, res, next) => {
     if (!user) {
       throw new Apierror(401, "Invalid Access Token");
     }
+    if(user.activeRole === "professional") {
+      await user.populate("professional")
+    }
+    
 
     req.user = user;
     
