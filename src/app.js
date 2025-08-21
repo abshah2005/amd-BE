@@ -6,6 +6,7 @@ import specializationRoute from "./routes/Specializations.route.js";
 import paymentRoute from "./routes/Payment.routes.js";
 import publicProfileRoute from "./routes/PublicProfiles.routes.js";
 import dashboardRoute from "./routes/Dashboard.routes.js";
+import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
 
 const app = express();
 
@@ -17,6 +18,9 @@ app.use(cors({
 }));
 
 
+// startAgenda().then(() => {
+//   console.log("Agenda started and jobs scheduled.");
+// });
 
 
 app.use(express.json({ limit: "16kb" }));

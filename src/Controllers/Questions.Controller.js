@@ -4,11 +4,16 @@ import { Users } from "../models/Users.model.js";
 import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
+import { handleAttachments } from "../utils/Attachments.js";
 // import Stripe from "stripe";
 // const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const createQuestion = asynchandler(async (req, res) => {
   const { title, body, professionalId } = req.body;
+  let attachmentsList = [];
+  if (req.files?.attachments) {
+    attachmentsList = await handleAttachments(req.files.attachments);
+  }
   if (!title || !body || !professionalId) throw new Apierror(400, "title, body, professionalId required");
   const pro = await Professional.findById(professionalId);
   if (!pro) throw new Apierror(404, "Professional not found");
@@ -16,6 +21,7 @@ export const createQuestion = asynchandler(async (req, res) => {
     title,
     body,
     asker: req.user._id,
+    attachments:attachmentsList,
     professional: pro._id,
     status: "submitted",
     timeline: [{ at: new Date(), status: "submitted", by: req.user._id }]
@@ -116,12 +122,16 @@ export const stripeWebhook = asynchandler(async (req, res) => {
 // Professional posts answer (starts 48h window)
 export const postAnswer = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { body, attachments } = req.body;
+  const { body } = req.body;
+  let attachmentsList = [];
+  if (req.files?.attachments) {
+    attachments = await handleAttachments(req.files.attachments);
+  }
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.professional) !== String(req.user.professional._id)) throw new Apierror(403, "Not professional");
   if (q.status !== "paid" && q.status !== "awaiting_response") throw new Apierror(400, "Not paid yet");
-  q.thread.messages.push({ sender: req.user._id, role: "professional", body, attachments, isFollowUp: false });
+  q.thread.messages.push({ sender: req.user._id, role: "professional", body, attachments:attachmentsList, isFollowUp: false });
   q.status = "answered";
   q.thread.followUpWindowExpiresAt = new Date(Date.now() + 48 * 3600 * 1000);
   q.timeline.push({ at: new Date(), status: "answered", by: req.user._id });
@@ -132,12 +142,16 @@ export const postAnswer = asynchandler(async (req, res) => {
 // Asker posts follow-up (within 48h window)
 export const postFollowUp = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { body, attachments } = req.body;
+  const { body } = req.body;
+  let attachmentsList = [];
+  if (req.files?.attachments) {
+    attachments = await handleAttachments(req.files.attachments);
+  }
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id)) throw new Apierror(403, "Not asker");
   if (!q.thread.followUpWindowExpiresAt || new Date() > new Date(q.thread.followUpWindowExpiresAt)) throw new Apierror(400, "Follow-up window expired");
-  q.thread.messages.push({ sender: req.user._id, role: "asker", body, attachments, isFollowUp: true });
+  q.thread.messages.push({ sender: req.user._id, role: "asker", body, attachments:attachmentsList, isFollowUp: true });
   q.status = "in_thread";
   q.timeline.push({ at: new Date(), status: "in_thread", by: req.user._id });
   await q.save();
