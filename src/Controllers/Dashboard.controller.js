@@ -43,7 +43,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
         totalSpendings: { $literal: 0 },
         questionsAsked: { $literal: 0 },
         questionsAnswered: { $literal: 0 },
-        status: { $cond: [{ $eq: ["$user.isActive", true] }, "Active", "Inactive"] },
+        status: { $cond: [{ $eq: ["$user.isActive", true] }, true, false] },
       }
     }
   ];
