@@ -1,5 +1,5 @@
 import { S3Client, PutObjectCommand,DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { Image } from "../models/Image.model.js";
+import { Image } from "../models/image.model.js";
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION,
