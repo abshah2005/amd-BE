@@ -530,7 +530,6 @@ const linkedinCallback = asynchandler(async (req, res) => {
         email,
         firstName,
         lastName,
-        activeRole:user.role,
         password: tempPassword,
         profilePic: profilePicUrl,
         authProvider: "linkedin",

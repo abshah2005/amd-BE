@@ -6,10 +6,10 @@ import { Asker } from "../models/Asker.model.js";
 
 // Dashboard summary stats
 export const getDashboardStats = asynchandler(async (req, res) => {
-  const totalUsers = await Users.countDocuments();
+  const totalUsers = await Users.countDocuments().where({isAdmin:false});
   const activeUsers = await Users.countDocuments({ isActive: true });
-  const totalPlatformEarnings = 0; // TODO: aggregate from payments
-  const avgRating = 0; // TODO: aggregate from reviews
+  const totalPlatformEarnings = 2; // TODO: aggregate from payments
+  const avgRating = 3.5; // TODO: aggregate from reviews
 
   res.status(200).json(new Apiresponse(200, {
     totalUsers,

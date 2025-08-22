@@ -11,7 +11,7 @@ import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
 const app = express();
 
 app.use(cors({
-  origin: ["http://localhost:8081", "http://localhost:5173"],
+  origin: ["http://localhost:8081", "http://localhost:5173","*"],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
