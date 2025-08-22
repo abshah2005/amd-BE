@@ -11,7 +11,7 @@ import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
 const app = express();
 
 app.use(cors({
-  origin: ["https://ask-me-direct-lgm26fj9h-adeems-projects.vercel.app","*"],
+  origin:[process.env.FRONTEND_URL],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
