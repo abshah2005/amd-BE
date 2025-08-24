@@ -9,6 +9,7 @@ const ProfessionalSchema = new mongoose.Schema(
       unique: true,
     },
     profilePicture: { type: String, default: null },
+    feedbacks: [{ type: mongoose.Schema.Types.ObjectId, ref: "Feedback" }],
     entityType: {
       type: String,
       enum: ["individual", "firm"],

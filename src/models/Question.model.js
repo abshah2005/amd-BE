@@ -23,8 +23,13 @@ const QuestionSchema = new mongoose.Schema(
       amount: Number,
       message: String,
       createdAt: Date,
-      expiresAt: Date
     },
+    deliveryType: {
+      type: String,
+      enum: ["normal", "fast"],
+      default: "normal"
+    },
+    answerBy:{type:Date},
     attachments:[String],
     payment: {
       paid: { type: Boolean, default: false },

@@ -2,6 +2,21 @@ import { Question } from "../models/Question.model.js";
 import Stripe from "stripe";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+export const autoCloseExpiredQuestions = asynchandler(async () => {
+  const now = new Date();
+  const expiredQuestions = await Question.find({
+    status: { $in: ["quoted", "awaiting_response"] },
+    answerBy: { $lte: now }
+  });
+
+  for (const q of expiredQuestions) {
+    q.status = "closed";
+    q.thread.closedAt = now;
+    q.timeline.push({ at: now, status: "auto_closed_due_to_no_answer" });
+    await q.save();
+  }
+});
+
 export const autoCloseExpiredThreads = async () => {
   const now = new Date();
   const expiredThreads = await Question.find({
