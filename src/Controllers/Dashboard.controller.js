@@ -3,6 +3,7 @@ import { Apiresponse } from "../utils/Apiresponse.js";
 import { Users } from "../models/Users.model.js";
 import { Professional } from "../models/Professional.model.js";
 import { Asker } from "../models/Asker.model.js";
+import { Question } from "../models/Question.model.js";
 
 // Dashboard summary stats
 export const getDashboardStats = asynchandler(async (req, res) => {
@@ -17,6 +18,56 @@ export const getDashboardStats = asynchandler(async (req, res) => {
     totalPlatformEarnings,
     avgRating,
   }, "Dashboard stats"));
+});
+
+export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
+  const professionalId = req.user.professional?._id;
+  if (!professionalId) throw new Apierror(403, "Not a professional");
+
+  // Active questions: not closed/rejected
+  const activeQuestions = await Question.countDocuments({
+    professional: professionalId,
+    status: { $nin: ["closed", "rejected"] }
+  });
+
+  // Completed questions: closed
+  const questionsCompleted = await Question.countDocuments({
+    professional: professionalId,
+    status: "closed"
+  });
+
+  // Earnings: sum of paid questions
+  const earningsAgg = await Question.aggregate([
+    { $match: { professional: professionalId, "payment.paid": true } },
+    { $group: { _id: null, total: { $sum: "$price" } } }
+  ]);
+  const totalEarnings = earningsAgg[0]?.total || 0;
+
+  // Rating
+  const prof = await Professional.findById(professionalId);
+  const avgRating = prof?.rating || 0;
+
+  res.status(200).json(new Apiresponse(200, {
+    activeQuestions,
+    questionsCompleted,
+    avgRating,
+    totalEarnings
+  }, "Dashboard stats"));
+});
+
+export const getProfessionalPendingQuestions = asynchandler(async (req, res) => {
+  const professionalId = req.user.professional?._id;
+  if (!professionalId) throw new Apierror(403, "Not a professional");
+
+  const questions = await Question.find({
+    professional: professionalId,
+    status: { $nin: ["closed", "rejected"] }
+  })
+    .sort({ createdAt: -1 })
+    .populate(
+      "asker");
+
+  res.status(200).json(new Apiresponse(200, questions, "Pending questions"));
 });
 
 // Paginated users for dashboard tables
