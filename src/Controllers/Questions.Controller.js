@@ -6,11 +6,25 @@ import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
 import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
-// import Stripe from "stripe";
-// const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+import Stripe from "stripe";
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+const PLATFORM_FEE_PERCENT = parseFloat(
+  process.env.PLATFORM_FEE_PERCENT || "12"
+);
+const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
+  process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
+);
 
 export const createQuestion = asynchandler(async (req, res) => {
-  const { title, body, professionalId, deliveryType = "normal" } = req.body;
+  const {
+    title,
+    body,
+    professionalId,
+    deliveryType = "normal",
+    editorState,
+    budget,
+  } = req.body;
   let attachmentsList = [];
   if (req.files?.attachments) {
     attachmentsList = await handleAttachments(req.files.attachments);
@@ -19,13 +33,16 @@ export const createQuestion = asynchandler(async (req, res) => {
     throw new Apierror(400, "title, body, professionalId required");
   const pro = await Professional.findById(professionalId);
   if (!pro) throw new Apierror(404, "Professional not found");
+
   const q = await Question.create({
     title,
     body,
     asker: req.user._id,
+    proposedBudget: budget.typeofbudget === "number" ? budget : 0,
     attachments: attachmentsList,
     professional: pro._id,
     deliveryType,
+    editorState: editorState,
     status: "submitted",
     timeline: [{ at: new Date(), status: "submitted", by: req.user._id }],
   });
@@ -48,6 +65,25 @@ export const rejectQuestion = asynchandler(async (req, res) => {
   });
   await q.save();
   return res.status(200).json(new Apiresponse(200, q, "Question rejected"));
+});
+
+export const approveQuestion = asynchandler(async (req, res) => {
+  const { id } = req.params;
+
+  const q = await Question.findById(id);
+  if (!q) throw new Apierror(404, "Question not found");
+  if (String(q.professional) !== String(req.user.professional._id))
+    throw new Apierror(403, "Not professional");
+
+  q.status = "approved";
+  q.timeline.push({
+    at: new Date(),
+    status: "approved",
+    by: req.user._id,
+  });
+
+  await q.save();
+  return res.status(200).json(new Apiresponse(200, q, "Question approved"));
 });
 
 export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
@@ -88,31 +124,25 @@ export const payQuestion = asynchandler(async (req, res) => {
     throw new Apierror(403, "Not asker");
   if (q.status !== "approved" && q.status !== "quoted")
     throw new Apierror(400, "Not approved or quoted yet");
-  //   const paymentIntent = await stripe.paymentIntents.create({
-  //     amount: Math.round(q.price * 100),
-  //     currency: "usd",
-  //     metadata: { questionId: q._id.toString() },
-  //   });
-  //   q.payment = {
-  //     paid: false,
-  //     paymentProvider: "stripe",
-  //     paymentReference: paymentIntent.id,
-  //   };
-  //   q.status = "awaiting_payment";
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: Math.round(q.price * 100),
+    currency: "usd",
+    metadata: { questionId: q._id.toString() },
+  });
   q.payment = {
-    paid: true,
+    paid: false,
     paymentProvider: "stripe",
-    paymentReference: "Some Random ass id for now",
+    paymentReference: paymentIntent.id,
   };
-  q.status = "awaiting_response";
+  q.status = "awaiting_payment";
+  
   await q.save();
-  //   return res.status(200).json(new Apiresponse(200, { clientSecret: paymentIntent.client_secret }, "Payment initiated"));
   return res
     .status(200)
     .json(
       new Apiresponse(
         200,
-        { clientSecret: "Some Random ass client secret for now", question: q },
+        { clientSecret: paymentIntent.client_secret },
         "Payment initiated"
       )
     );
@@ -251,13 +281,14 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     throw new Apierror(403, "Not professional");
 
   const now = new Date();
-  let payoutAmount = q.price;
+  let totalFeePercent = PLATFORM_FEE_PERCENT;
   let penalty = false;
   if (now < q.thread.followUpWindowExpiresAt) {
-    payoutAmount = Math.round(q.price * 0.85);
+    totalFeePercent += EARLY_CLOSE_PENALTY_PERCENT;
     q.thread.threadClosedEarlier = true;
     penalty = true;
   }
+  const payoutAmount = Math.round(q.price * (1 - totalFeePercent / 100));
   q.status = "closed";
   q.thread.closedAt = now;
   await q.save();
@@ -300,7 +331,7 @@ export const submitFeedback = asynchandler(async (req, res) => {
   });
   if (existing)
     throw new Apierror(400, "Feedback already submitted for this question");
-  
+
   const feedback = await Feedback.create({
     question: q._id,
     professional: q.professional,
@@ -326,20 +357,6 @@ export const submitFeedback = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, feedback, "Feedback submitted"));
 });
 
-// List questions (for dashboard, etc.)
-// export const listQuestions = asynchandler(async (req, res) => {
-//   const { status, professionalId, askerId } = req.query;
-//   const filter = {};
-//   if (status) filter.status = status;
-//   if (professionalId) filter.professional = professionalId;
-//   if (askerId) filter.asker = askerId;
-//   const questions = await Question.find(filter).sort({ createdAt: -1 });
-//   return res
-//     .status(200)
-//     .json(new Apiresponse(200, questions, "Questions listed"));
-// });
-
-
 export const listQuestions = asynchandler(async (req, res) => {
   const { status, page = 1, limit = 10 } = req.query;
   const filter = {};
@@ -351,14 +368,14 @@ export const listQuestions = asynchandler(async (req, res) => {
   }
 
   if (status) {
-  // Accept comma-separated string or array
-  const statusList = Array.isArray(status)
-    ? status
-    : typeof status === "string"
+    // Accept comma-separated string or array
+    const statusList = Array.isArray(status)
+      ? status
+      : typeof status === "string"
       ? status.split(",")
       : [status];
-  filter.status = { $in: statusList };
-}
+    filter.status = { $in: statusList };
+  }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const total = await Question.countDocuments(filter);
@@ -370,21 +387,25 @@ export const listQuestions = asynchandler(async (req, res) => {
       path: "professional",
       populate: {
         path: "user",
-        select: "firstName lastName"
-      }
+        select: "firstName lastName",
+      },
     })
     .populate({
       path: "asker",
-      select: "firstName lastName"
+      select: "firstName lastName",
     });
 
   return res.status(200).json(
-    new Apiresponse(200, {
-      questions,
-      total,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      totalPages: Math.ceil(total / limit)
-    }, "Questions listed")
+    new Apiresponse(
+      200,
+      {
+        questions,
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit),
+      },
+      "Questions listed"
+    )
   );
 });

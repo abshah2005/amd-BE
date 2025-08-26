@@ -6,8 +6,8 @@ import "./MinuteJob.js";
 
 export const startAgenda = async () => {
   await agenda.start();
-  await agenda.every("1 hour", "hourly check");
-  await agenda.every("1 month", "monthly report");
+  // await agenda.every("1 hour", "hourly check");
+  // await agenda.every("1 month", "monthly report");
   await agenda.every("1 minute","minute check");
   await agenda.every("0 0 1 * *", "monthly midnight task"); 
 };

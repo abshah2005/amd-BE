@@ -19,6 +19,7 @@ const QuestionSchema = new mongoose.Schema(
     asker: { type: mongoose.Schema.Types.ObjectId, ref: "Users", required: true, index: true },
     professional: { type: mongoose.Schema.Types.ObjectId, ref: "Professional", required: true, index: true },
     price: { type: Number, default: 0 },
+    proposedBudget: { type: Number,default :0},
     quote: {
       amount: Number,
       message: String,
@@ -30,6 +31,7 @@ const QuestionSchema = new mongoose.Schema(
       default: "normal"
     },
     answerBy:{type:Date},
+    editorState:{type:String},
     attachments:[String],
     payment: {
       paid: { type: Boolean, default: false },
