@@ -44,7 +44,14 @@ export const createQuestion = asynchandler(async (req, res) => {
     deliveryType,
     editorState: editorState,
     status: "submitted",
-    timeline: [{ at: new Date(), status: "submitted", by: req.user._id }],
+    timeline: [
+      {
+        at: new Date(),
+        status: "submitted",
+        by: req.user._id,
+        note: "Your question has been received by the professional. You'll receive a response or custom quote soon.",
+      },
+    ],
   });
   return res.status(201).json(new Apiresponse(201, q, "Question created"));
 });
@@ -80,6 +87,7 @@ export const approveQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "approved",
     by: req.user._id,
+    note: "Question approved by professional.",
   });
 
   await q.save();
@@ -88,7 +96,7 @@ export const approveQuestion = asynchandler(async (req, res) => {
 
 export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { amount, message, answerBy } = req.body;
+  const { amount, answerBy } = req.body;
 
   if (!amount) throw new Apierror(400, "amount required");
   if (!answerBy) throw new Apierror(400, "answerBy (date/time) required");
@@ -98,7 +106,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
   if (String(q.professional) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
 
-  q.quote = { amount, message, createdAt: new Date() };
+  q.quote = { amount, createdAt: new Date() };
   q.price = amount;
   q.status = "quoted";
   q.answerBy = new Date(answerBy);
@@ -106,7 +114,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "approved_and_quoted",
     by: req.user._id,
-    note: message,
+    note: `The price for the question is set to $${q.price} from the professional.`,
   });
 
   await q.save();
@@ -135,7 +143,12 @@ export const payQuestion = asynchandler(async (req, res) => {
     paymentReference: paymentIntent.id,
   };
   q.status = "awaiting_payment";
-  
+  q.timeline.push({
+    at: new Date(),
+    status: "payment_awaiting",
+    by: req.user._id,
+    note: "Tap 'Pay Now' to confirm question's budget.",
+  });
   await q.save();
   return res
     .status(200)
@@ -170,6 +183,12 @@ export const stripeWebhook = asynchandler(async (req, res) => {
       q.payment.paid = true;
       q.payment.paidAt = new Date();
       q.status = "paid";
+      q.timeline.push({
+        at: new Date(),
+        status: "paid",
+        by: q.asker,
+        note: "Your payment is complete! 🎉 We've notified the professional — they'll review your question and respond within the selected delivery time.",
+      });
       await q.save();
     }
   }
@@ -199,7 +218,12 @@ export const postAnswer = asynchandler(async (req, res) => {
   });
   q.status = "answered";
   q.thread.followUpWindowExpiresAt = new Date(Date.now() + 48 * 3600 * 1000);
-  q.timeline.push({ at: new Date(), status: "answered", by: req.user._id });
+  q.timeline.push({
+    at: new Date(),
+    status: "answered",
+    by: req.user._id,
+    note: "Your question has been answered. You can ask a follow up question.",
+  });
   await q.save();
   return res.status(200).json(new Apiresponse(200, q, "Answer posted"));
 });
@@ -229,7 +253,12 @@ export const postFollowUp = asynchandler(async (req, res) => {
     isFollowUp: true,
   });
   q.status = "in_thread";
-  q.timeline.push({ at: new Date(), status: "in_thread", by: req.user._id });
+  q.timeline.push({
+    at: new Date(),
+    status: "in_thread",
+    by: req.user._id,
+    note: "Follow-up question asked.",
+  });
   await q.save();
   return res.status(200).json(new Apiresponse(200, q, "Follow-up posted"));
 });
@@ -263,6 +292,7 @@ export const answerFollowUp = asynchandler(async (req, res) => {
     at: new Date(),
     status: "followup_answered",
     by: req.user._id,
+    note: "Follow-up question answered.",
   });
   await q.save();
   return res
@@ -289,8 +319,16 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     penalty = true;
   }
   const payoutAmount = Math.round(q.price * (1 - totalFeePercent / 100));
+  console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
   q.status = "closed";
   q.thread.closedAt = now;
+  q.timeline.push({
+    at: new Date(),
+    status: "closed",
+    by: req.user._id,
+    note: "Thread closed and payout sent.",
+  });
+
   await q.save();
 
   if (q.professional.professionalStripeId) {
@@ -315,7 +353,7 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
 });
 
 export const submitFeedback = asynchandler(async (req, res) => {
-  const { id } = req.params; // question id
+  const { id } = req.params;
   const { rating, comment } = req.body;
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
