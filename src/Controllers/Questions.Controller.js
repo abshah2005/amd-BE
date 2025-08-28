@@ -38,7 +38,7 @@ export const createQuestion = asynchandler(async (req, res) => {
     title,
     body,
     asker: req.user._id,
-    proposedBudget: budget.typeofbudget === "number" ? budget : 0,
+    proposedBudget: budget,
     attachments: attachmentsList,
     professional: pro._id,
     deliveryType,
@@ -47,6 +47,12 @@ export const createQuestion = asynchandler(async (req, res) => {
     timeline: [
       {
         at: new Date(),
+        status: "question_asked",
+        by: req.user._id,
+        note: body,
+      },
+      {
+        at: new Date(Date.now() + 30 * 1000),
         status: "submitted",
         by: req.user._id,
         note: "Your question has been received by the professional. You'll receive a response or custom quote soon.",
@@ -130,7 +136,7 @@ export const payQuestion = asynchandler(async (req, res) => {
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
     throw new Apierror(403, "Not asker");
-  if (q.status !== "approved" && q.status !== "quoted")
+  if (q.status !== "approved" && q.status !== "quoted" && q.status !== "awaiting_payment")
     throw new Apierror(400, "Not approved or quoted yet");
   const paymentIntent = await stripe.paymentIntents.create({
     amount: Math.round(q.price * 100),
@@ -159,6 +165,28 @@ export const payQuestion = asynchandler(async (req, res) => {
         "Payment initiated"
       )
     );
+});
+
+
+export const paidStatusQuestion = asynchandler(async (req, res) => {
+  const { id } = req.params;
+
+  const q = await Question.findById(id);
+  if (q) {
+      q.payment.paid = true;
+      q.payment.paidAt = new Date();
+      q.status = "paid";
+      q.timeline.push({
+        at: new Date(),
+        status: "paid",
+        by: q.asker,
+        note: "Your payment is complete! 🎉 We've notified the professional — they'll review your question and respond within the selected delivery time.",
+      });
+      await q.save();
+    }
+
+  await q.save();
+  return res.status(200).json(new Apiresponse(200, q, "Question paid"));
 });
 
 // Stripe webhook for payment confirmation
@@ -393,6 +421,51 @@ export const submitFeedback = asynchandler(async (req, res) => {
   return res
     .status(200)
     .json(new Apiresponse(200, feedback, "Feedback submitted"));
+});
+
+// Get question by ID endpoint - add this with your other exports
+export const getQuestionById = asynchandler(async (req, res) => {
+  const { id } = req.params;
+  
+  if (!id) {
+    throw new Apierror(400, "Question ID is required");
+  }
+  const question = await Question.findById(id)
+    .populate({
+      path: "professional",
+      populate: {
+        path: "user",
+        select: "firstName lastName profilePic" 
+      }
+    })
+    .populate({
+      path: "asker",
+      select: "firstName lastName profilePic"
+    })
+    .populate({
+      path: "thread.messages.sender",
+      select: "firstName lastName profilePic"
+    });
+
+  if (!question) {
+    throw new Apierror(404, "Question not found");
+  }
+
+  const isAsker = String(question.asker._id) === String(req.user._id);
+  const isProfessional = req.user.professional && 
+    String(question.professional._id) === String(req.user.professional._id);
+  
+  if (!isAsker && !isProfessional && req.user.role !== "admin") {
+    throw new Apierror(403, "You don't have permission to access this question");
+  }
+
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      question,
+      "Question retrieved successfully"
+    )
+  );
 });
 
 export const listQuestions = asynchandler(async (req, res) => {
