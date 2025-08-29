@@ -223,38 +223,58 @@ export const stripeWebhook = asynchandler(async (req, res) => {
   res.status(200).send("Received");
 });
 
-// Professional posts answer (starts 48h window)
 export const postAnswer = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
   let attachmentsList = [];
   if (req.files?.attachments) {
-    attachments = await handleAttachments(req.files.attachments);
+    attachmentsList = await handleAttachments(req.files.attachments);
   }
+
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.professional) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
-  if (q.status !== "paid" && q.status !== "awaiting_response")
-    throw new Apierror(400, "Not paid yet");
-  q.thread.messages.push({
-    sender: req.user._id,
-    role: "professional",
-    body,
-    attachments: attachmentsList,
-    isFollowUp: false,
-  });
-  q.status = "answered";
-  q.thread.followUpWindowExpiresAt = new Date(Date.now() + 48 * 3600 * 1000);
-  q.timeline.push({
-    at: new Date(),
-    status: "answered",
-    by: req.user._id,
-    note: "Your question has been answered. You can ask a follow up question.",
-  });
+
+  if (q.status === "paid" || q.status === "awaiting_response") {
+    q.thread.messages.push({
+      sender: req.user._id,
+      role: "professional",
+      body,
+      attachments: attachmentsList,
+      isFollowUp: false,
+    });
+    q.status = "answered";
+    q.thread.followUpWindowExpiresAt = new Date(Date.now() + 48 * 3600 * 1000);
+  } else if (q.status === "in_thread" || q.status ==="answered" ) {
+    // Follow-up answer logic
+    if (
+      !q.thread.followUpWindowExpiresAt ||
+      new Date() > new Date(q.thread.followUpWindowExpiresAt)
+    )
+      throw new Apierror(400, "Follow-up window expired");
+
+    q.thread.messages.push({
+      sender: req.user._id,
+      role: "professional",
+      body,
+      attachments: attachmentsList,
+      isFollowUp: true,
+    });
+    // q.timeline.push({
+    //   at: new Date(),
+    //   status: "followup_answered",
+    //   by: req.user._id,
+    //   note: "Follow-up question answered.",
+    // });
+  } else {
+    throw new Apierror(400, "Invalid status for posting an answer");
+  }
+
   await q.save();
-  return res.status(200).json(new Apiresponse(200, q, "Answer posted"));
+  return res.status(200).json(new Apiresponse(200, q, "Answer posted successfully"));
 });
+
 
 // Asker posts follow-up (within 48h window)
 export const postFollowUp = asynchandler(async (req, res) => {
@@ -281,12 +301,12 @@ export const postFollowUp = asynchandler(async (req, res) => {
     isFollowUp: true,
   });
   q.status = "in_thread";
-  q.timeline.push({
-    at: new Date(),
-    status: "in_thread",
-    by: req.user._id,
-    note: "Follow-up question asked.",
-  });
+  // q.timeline.push({
+  //   at: new Date(),
+  //   status: "in_thread",
+  //   by: req.user._id,
+  //   note: "Follow-up question asked.",
+  // });
   await q.save();
   return res.status(200).json(new Apiresponse(200, q, "Follow-up posted"));
 });
@@ -331,6 +351,7 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 // Professional closes thread (payout logic)
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
+  const {body} =req.body;
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (q.status === "closed") throw new Apierror(400, "Already closed");
@@ -354,18 +375,20 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     at: new Date(),
     status: "closed",
     by: req.user._id,
-    note: "Thread closed and payout sent.",
+    note: "Thread closed by professional. " + (body ? `Note: ${body}` : ""),
   });
 
   await q.save();
 
   if (q.professional.professionalStripeId) {
+    
     await stripe.transfers.create({
       amount: Math.round(payoutAmount * 100),
       currency: "usd",
       destination: q.professional.professionalStripeId,
       metadata: { questionId: q._id.toString() },
     });
+    console.log(`Initiating payout of $${payoutAmount} to professional ${q.professional._id}`);
   }
   return res
     .status(200)
