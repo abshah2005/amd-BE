@@ -102,44 +102,71 @@ export const approveQuestion = asynchandler(async (req, res) => {
 
 export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { amount, answerBy } = req.body;
+  const { normalAmount, fastAmount, answerByNormal, answerByFast } = req.body;
 
-  if (!amount) throw new Apierror(400, "amount required");
-  if (!answerBy) throw new Apierror(400, "answerBy (date/time) required");
+  if (!normalAmount && !fastAmount)
+    throw new Apierror(400, "At least one quote amount required");
 
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.professional) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
 
-  q.quote = { amount, createdAt: new Date() };
-  q.price = amount;
+  q.quote = {
+    normal: normalAmount
+      ? { amount: normalAmount, createdAt: new Date(), message: "Normal delivery quote" }
+      : undefined,
+    fast: fastAmount
+      ? { amount: fastAmount, createdAt: new Date(), message: "Fast delivery quote" }
+      : undefined,
+  };
+
+  // Set answerBy for each type if provided
+  if (answerByNormal) q.answerByNormal = new Date(answerByNormal);
+  if (answerByFast) q.answerByFast = new Date(answerByFast);
+
   q.status = "quoted";
-  q.answerBy = new Date(answerBy);
   q.timeline.push({
     at: new Date(),
     status: "approved_and_quoted",
     by: req.user._id,
-    note: `The price for the question is set to $${q.price} from the professional.`,
+    note: `Quotes posted: normal $${normalAmount || "-"}, fast $${fastAmount || "-"}`,
   });
 
   await q.save();
   return res
     .status(200)
-    .json(new Apiresponse(200, q, "Question approved and quote posted"));
+    .json(new Apiresponse(200, q, "Quotes posted for both delivery types"));
 });
 
-// Pay for question (Stripe PaymentIntent)
+
+
 export const payQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
+  const { deliveryType } = req.body; 
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
     throw new Apierror(403, "Not asker");
   if (q.status !== "approved" && q.status !== "quoted" && q.status !== "awaiting_payment")
     throw new Apierror(400, "Not approved or quoted yet");
+
+  let price = 0;
+  if (deliveryType === "fast" && q.quote.fast?.amount) {
+    price = q.quote.fast.amount;
+    q.deliveryType = "fast";
+    if (q.answerByFast) q.answerBy = q.answerByFast;
+  } else if (deliveryType === "normal" && q.quote.normal?.amount) {
+    price = q.quote.normal.amount;
+    q.deliveryType = "normal";
+    if (q.answerByNormal) q.answerBy = q.answerByNormal;
+  } else {
+    throw new Apierror(400, "Invalid delivery type or quote not available");
+  }
+  q.price = price;
+
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(q.price * 100),
+    amount: Math.round(price * 100),
     currency: "usd",
     metadata: { questionId: q._id.toString() },
   });
@@ -153,7 +180,7 @@ export const payQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "payment_awaiting",
     by: req.user._id,
-    note: "Tap 'Pay Now' to confirm question's budget.",
+    note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
   });
   await q.save();
   return res
@@ -436,6 +463,8 @@ export const submitFeedback = asynchandler(async (req, res) => {
   const prof = await Professional.findById(q.professional).populate(
     "feedbacks"
   );
+  q.feedback=feedback._id;
+  await q.save();
   const ratings = prof.feedbacks.map((fb) => fb.rating);
   prof.rating = ratings.reduce((a, b) => a + b, 0) / ratings.length;
   prof.ratingCount = ratings.length;
@@ -468,7 +497,9 @@ export const getQuestionById = asynchandler(async (req, res) => {
     .populate({
       path: "thread.messages.sender",
       select: "firstName lastName profilePic"
-    });
+    })
+    .populate("feedback");
+    
 
   if (!question) {
     throw new Apierror(404, "Question not found");
