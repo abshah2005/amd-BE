@@ -6,6 +6,7 @@ import {
   getProfessionalsBySpecialization,
   listAskers,
   getAskerById,
+  getProfessionalByFullName,
 } from "../Controllers/PublicProfiles.controller.js";
 
 const router = Router();
@@ -15,6 +16,7 @@ router.get("/professionals", listProfessionals); // ?page&limit&q&tag&category&m
 router.get("/professionals/top", getTopProfessionals); // ?limit
 router.get("/professionals/specialization/:specializationId", getProfessionalsBySpecialization);
 router.get("/professionals/:id", getProfessionalById);
+router.get("/professionals/name/:fullName", getProfessionalByFullName); // New
 
 /* Askers */
 router.get("/askers", listAskers); // ?page&limit&q

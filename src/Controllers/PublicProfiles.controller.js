@@ -22,6 +22,75 @@ const parseSort = (sortStr) => {
   return out;
 };
 
+const getProfessionalByFullName = asynchandler(async (req, res) => {
+
+  let { fullName } = req.params;
+  if (!fullName) {
+    throw new Apierror(400, "Full name is required");
+  }
+
+  fullName = fullName.replace(/[-_]/g, " ").replace(/\s+/g, " ").trim();
+
+  const parts = fullName.split(" ");
+  if (parts.length < 2) {
+    throw new Apierror(400, "Full name must include first and last name");
+  }
+  const firstName = parts[0];
+  const lastName = parts.slice(1).join(" ");
+
+  const user = await Users.findOne({
+    firstName: new RegExp(`^${firstName}$`, "i"),
+    lastName: new RegExp(`^${lastName}$`, "i"),
+    roles: "professional",
+  });
+
+  if (!user) {
+    throw new Apierror(404, "Professional not found");
+  }
+
+  const professional = await Professional.findOne({ user: user._id }).lean();
+  if (!professional) {
+    throw new Apierror(404, "Professional profile not found");
+  }
+
+  const response = {
+    _id: professional._id,
+    title: professional.title,
+    userId: user._id,
+    email: user.email,
+    profilePic: user.profilePic,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    tags: professional.tags,
+    entityType: professional.entityType,
+    deliveryTime: professional.deliveryTime,
+    firmName: professional.firmName,
+    exampleQuestions: professional.exampleQuestions,
+    languages: professional.languages,
+    country: professional.country,
+    priceRangeLow: professional.priceRangeLow,
+    about: professional.about,
+    currency: professional.currency,
+    priceRangeHigh: professional.priceRangeHigh,
+    isActive: user.isActive,
+    verified: professional.verified,
+    joinedDate: professional.createdAt,
+    featured: professional.featured,
+    feedbacks:professional.feedbacks,
+    totalAnswers: 20,
+    totalEarnings: 20,
+    rating: professional.rating,
+    ratingCount: professional.ratingCount,
+    categories: Array.isArray(professional.selectedSpecializations)
+      ? professional.selectedSpecializations.map(s => s.specialization?.toString())
+      : [],
+  };
+
+  return res.status(200).json(
+    new Apiresponse(200, response, "Professional public profile retrieved")
+  );
+});
+
 const listProfessionals = asynchandler(async (req, res) => {
   const {
     page = 1,
@@ -465,4 +534,5 @@ export {
   getProfessionalsBySpecialization,
   listAskers,
   getAskerById,
+  getProfessionalByFullName
 };

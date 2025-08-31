@@ -314,9 +314,10 @@ const registerStep3 = asynchandler(async (req, res) => {
 
 const registerStep4 = asynchandler(async (req, res) => {
   const { email } = req.body;
-  const professionalPayload = typeof req.body.professional === "string"
-  ? JSON.parse(req.body.professional)
-  : req.body.professional || {};
+  const professionalPayload =
+    typeof req.body.professional === "string"
+      ? JSON.parse(req.body.professional)
+      : req.body.professional || {};
   const profilePicPath = req.files?.profilePic?.[0];
 
   if (!email) throw new Apierror(400, "Email is required");
@@ -537,14 +538,14 @@ const linkedinCallback = asynchandler(async (req, res) => {
       });
     } else {
       const updateFields = {
-        firstName:  user.firstName,
-        lastName:  user.lastName,
-        activeRole:user.role,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        activeRole: user.role,
         profilePic: user.profilePic,
         authProvider: "linkedin",
       };
       if (!user.password) {
-        updateFields.password = await bcrypt.hash(tempPassword, 10); 
+        updateFields.password = await bcrypt.hash(tempPassword, 10);
       }
       user = await Users.findOneAndUpdate(
         { _id: user._id },
@@ -767,6 +768,16 @@ const updateInfo = asynchandler(async (req, res) => {
     }
   }
 
+  if (typeof professionalPayload.selectedSpecializations === "string") {
+    try {
+      professionalPayload.selectedSpecializations = JSON.parse(
+        professionalPayload.selectedSpecializations
+      );
+    } catch (err) {
+      professionalPayload.selectedSpecializations = [];
+    }
+  }
+
   const userUpdate = {};
   if (firstName) userUpdate.firstName = firstName;
   if (lastName) userUpdate.lastName = lastName;
@@ -815,7 +826,8 @@ const updateInfo = asynchandler(async (req, res) => {
     }
 
     // ensure profilePicture is set from uploaded pic when not provided explicitly
-    if (profilePicUrl && !toSet.profilePicture) toSet.profilePicture = profilePicUrl;
+    if (profilePicUrl && !toSet.profilePicture)
+      toSet.profilePicture = profilePicUrl;
 
     if (Object.keys(toSet).length) {
       if (updatedUser.professional) {
@@ -833,14 +845,18 @@ const updateInfo = asynchandler(async (req, res) => {
         await updatedUser.save();
       }
     } else if (updatedUser.professional) {
-      updatedProfessional = await Professional.findById(updatedUser.professional);
+      updatedProfessional = await Professional.findById(
+        updatedUser.professional
+      );
     }
   }
 
   const payload = { user: updatedUser };
   if (updatedProfessional) payload.professional = updatedProfessional;
 
-  res.status(200).json(new Apiresponse(200, payload, "Profile updated successfully"));
+  res
+    .status(200)
+    .json(new Apiresponse(200, payload, "Profile updated successfully"));
 });
 
 const toggleActiveRole = asynchandler(async (req, res) => {
