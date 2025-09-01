@@ -8,7 +8,7 @@ import { Question } from "../models/Question.model.js";
 export const getDashboardStats = asynchandler(async (req, res) => {
   const totalUsers = await Users.countDocuments({ isAdmin: false });
 
-  const activeUsers = await Users.countDocuments({ isActive: true });
+  const activeUsers = await Users.countDocuments({ isActive: true,isAdmin:false });
 
   const earningsAgg = await Question.aggregate([
     { $match: { "payment.paid": true } },
@@ -61,6 +61,7 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   const totalEarnings = earningsAgg[0]?.total || 0;
 
   const prof = await Professional.findById(professionalId);
+  const normalize = (s) => String(s || "").replace(/\s+/g, "");
   await prof.populate("user", "firstName lastName");
   const avgRating = prof?.rating || 0;
 
@@ -72,7 +73,9 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
         questionsCompleted,
         avgRating,
         totalEarnings,
-        shareUrl: `${process.env.FRONTEND_URL}/profile/${prof.user.firstName}_${prof.user.lastName}`,
+        shareUrl:  `${process.env.FRONTEND_URL}/profile/${normalize(
+          prof.user.firstName
+        )}_${normalize(prof.user.lastName)}`,
       },
       "Dashboard stats"
     )
@@ -112,7 +115,9 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       },
     },
     { $unwind: "$user" },
-    { $match: { "user.roles": type, "user.activeRole": type } },
+    { $match: { "user.roles": type, 
+      // "user.activeRole": type
+     } },
     { $sort: { "user.createdAt": -1 } },
     { $skip: skip },
     { $limit: lim },

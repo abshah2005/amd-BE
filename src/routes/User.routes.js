@@ -19,15 +19,15 @@ import {
   registerStep4,
 } from "../Controllers/User.controller.js";
 import { upload } from "../middlewares/Multer.middleware.js";
-import { verifyJWT } from "../middlewares/Authentication.middleware.js";
+import { verifyJWT,trackActive } from "../middlewares/Authentication.middleware.js";
 
 const router = Router();
 
 router.route("/login").post(Loginuser);
-router.route("/logout").post(verifyJWT, LogoutUser);
-router.route("/getcurrent").get(verifyJWT, getCurrentUser);
+router.route("/logout").post(verifyJWT, trackActive,LogoutUser);
+router.route("/getcurrent").get(verifyJWT, trackActive,getCurrentUser);
 router.route("/upload").post(upload.single("file"), uploadFile);
-router.route("/updateinfo").put(verifyJWT, upload.fields([{name:"profilePic",maxCount:1}]),updateInfo);
+router.route("/updateinfo").put(verifyJWT, trackActive,upload.fields([{name:"profilePic",maxCount:1}]),updateInfo);
 router.route("/forgotPassword").post(forgotPassword);
 router.route("/resetPassword").put(resetPassword);
 
@@ -37,7 +37,7 @@ router.route("/register/step3").put(upload.fields([{ name: "profilePic", maxCoun
 router.route("/register/step4").put(upload.fields([{ name: "profilePic", maxCount: 1 }]), registerStep4);
 router.route("/register/step5").put(registerStep5);
 
-router.route("/role/active").post(verifyJWT, toggleActiveRole);
+router.route("/role/active").post(verifyJWT,trackActive ,toggleActiveRole);
 router.route("/register/state").get(getRegistrationState);
 
 router.route("/auth/linkedin/callback").post(linkedinCallback);

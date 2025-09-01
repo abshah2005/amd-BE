@@ -676,7 +676,7 @@ const Loginuser = asynchandler(async (req, res) => {
 const LogoutUser = asynchandler(async (req, res) => {
   const user = await Users.findByIdAndUpdate(
     req.user?._id,
-    { $unset: { refreshToken: 1 } },
+    { $unset: { refreshToken: 1 },isActive:false,lastActiveAt:new Date() },
     { new: true }
   );
   if (!user) {
@@ -777,6 +777,31 @@ const updateInfo = asynchandler(async (req, res) => {
       professionalPayload.selectedSpecializations = [];
     }
   }
+
+  const parseIfString = (val) => {
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return [];
+    }
+  }
+  return val;
+};
+
+// Parse all array/object fields from both professionalPayload and req.body
+const arrayFields = [
+  "selectedSpecializations",
+  "languages",
+  "locations",
+  "tags",
+  "exampleQuestions"
+];
+
+arrayFields.forEach((field) => {
+  professionalPayload[field] = parseIfString(professionalPayload[field]);
+  req.body[field] = parseIfString(req.body[field]);
+});
 
   const userUpdate = {};
   if (firstName) userUpdate.firstName = firstName;
