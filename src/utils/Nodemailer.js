@@ -37,7 +37,7 @@ export const sendQuestionStatusEmail = async (options) => {
     : `${question.asker?.firstName || ''} ${question.asker?.lastName || ''}`.trim();
     
   // Default action URL points to question detail page
-  const questionLink = actionUrl || `${process.env.FRONTEND_URL}/questions/${question._id}`;
+  const questionLink = `${process.env.FRONTEND_URL}/questions`;
   
   // Configure email details based on status and recipient
   const emailConfig = getEmailConfigByStatus(status, recipientType, question, otherParty, customMessage);

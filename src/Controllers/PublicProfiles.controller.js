@@ -243,6 +243,55 @@ const listProfessionals = asynchandler(async (req, res) => {
       },
     },
     { $unwind: "$user" },
+    
+    {
+      $lookup: {
+        from: "feedbacks",
+        let: { fIds: "$feedbacks" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $in: [
+                  "$_id",
+                  { $ifNull: ["$$fIds", []] }
+                ]
+              }
+            }
+          },
+          { $sort: { createdAt: -1 } },
+          // include asker basic info
+          {
+            $lookup: {
+              from: "users",
+              localField: "asker",
+              foreignField: "_id",
+              as: "asker"
+            }
+          },
+          { $unwind: { path: "$asker", preserveNullAndEmptyArrays: true } },
+          {
+            $project: {
+              _id: 1,
+              rating: 1,
+              comment: 1,
+              createdAt: 1,
+              asker: {
+                _id: "$asker._id",
+                firstName: "$asker.firstName",
+                lastName: "$asker.lastName",
+                profilePic: "$asker.profilePic",
+                email: "$asker.email"
+              }
+            }
+          }
+        ],
+        as: "feedbacks"
+      }
+    },
+
+
+
     {
       // $match: {
       //   "user.roles": "professional",
@@ -267,6 +316,7 @@ const listProfessionals = asynchandler(async (req, res) => {
               lastName: "$user.lastName",
               tags: 1,
               entityType: 1,
+              feedbacks:1,
               deliveryTime: 1,
               firmName: 1,
               exampleQuestions: 1,
@@ -312,6 +362,8 @@ const listProfessionals = asynchandler(async (req, res) => {
       aggResult[0].total[0] &&
       aggResult[0].total[0].count) ||
     0;
+  
+  
 
   return res
     .status(200)

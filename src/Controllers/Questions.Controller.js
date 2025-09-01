@@ -7,6 +7,7 @@ import { Apierror } from "../utils/Apierror.js";
 import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
+import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const PLATFORM_FEE_PERCENT = parseFloat(
@@ -15,6 +16,51 @@ const PLATFORM_FEE_PERCENT = parseFloat(
 const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
   process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
 );
+
+
+// helper: populate users and send emails to both parties (non-blocking)
+async function notifyStatusChange(question, status, customMessage, actionUrl) {
+  try {
+    // ensure asker and professional.user are populated with email & names
+    await question.populate([
+      {
+        path: "professional",
+        populate: { path: "user", select: "firstName lastName email profilePic" },
+      },      
+    ]);
+    await question.populate("asker")
+
+    const asker = question.asker;
+    const professionalUser = question.professional?.user;
+
+    // send to asker
+    if (asker?.email) {
+      sendQuestionStatusEmail({
+        recipientType: "asker",
+        status,
+        question,
+        recipient: asker,
+        customMessage,
+        actionUrl,
+      }).catch((err) => console.error("Email to asker failed:", err));
+    }
+
+    // send to professional
+    if (professionalUser?.email) {
+      sendQuestionStatusEmail({
+        recipientType: "professional",
+        status,
+        question,
+        recipient: professionalUser,
+        customMessage,
+        actionUrl,
+      }).catch((err) => console.error("Email to professional failed:", err));
+    }
+  } catch (err) {
+    console.error("notifyStatusChange error:", err);
+  }
+}
+
 
 export const createQuestion = asynchandler(async (req, res) => {
   const {
@@ -59,6 +105,7 @@ export const createQuestion = asynchandler(async (req, res) => {
       },
     ],
   });
+  notifyStatusChange(q, "submitted").catch(() => {});
   return res.status(201).json(new Apiresponse(201, q, "Question created"));
 });
 
@@ -77,6 +124,7 @@ export const rejectQuestion = asynchandler(async (req, res) => {
     note: message ? message : "Sorry i cant Answer this Question",
   });
   await q.save();
+    notifyStatusChange(q, "rejected", message).catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Question rejected"));
 });
 
@@ -97,6 +145,7 @@ export const approveQuestion = asynchandler(async (req, res) => {
   });
 
   await q.save();
+  notifyStatusChange(q, "approved").catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Question approved"));
 });
 
@@ -133,7 +182,10 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     note: `Quotes posted: normal $${normalAmount || "-"}, fast $${fastAmount || "-"}`,
   });
 
+
+
   await q.save();
+  notifyStatusChange(q, "quoted").catch(() => {});
   return res
     .status(200)
     .json(new Apiresponse(200, q, "Quotes posted for both delivery types"));
@@ -183,6 +235,7 @@ export const payQuestion = asynchandler(async (req, res) => {
     note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
   });
   await q.save();
+  notifyStatusChange(q, "awaiting_payment").catch(() => {});
   return res
     .status(200)
     .json(
@@ -213,6 +266,7 @@ export const paidStatusQuestion = asynchandler(async (req, res) => {
     }
 
   await q.save();
+  notifyStatusChange(q, "paid").catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Question paid"));
 });
 
@@ -299,6 +353,9 @@ export const postAnswer = asynchandler(async (req, res) => {
   }
 
   await q.save();
+  if (q.status === "answered") {
+    notifyStatusChange(q, "answered").catch(() => {});
+  }
   return res.status(200).json(new Apiresponse(200, q, "Answer posted successfully"));
 });
 
@@ -335,6 +392,7 @@ export const postFollowUp = asynchandler(async (req, res) => {
   //   note: "Follow-up question asked.",
   // });
   await q.save();
+  notifyStatusChange(q, "in_thread").catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Follow-up posted"));
 });
 
@@ -417,6 +475,7 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     });
     console.log(`Initiating payout of $${payoutAmount} to professional ${q.professional._id}`);
   }
+  notifyStatusChange(q, "closed", body).catch(() => {});
   return res
     .status(200)
     .json(
