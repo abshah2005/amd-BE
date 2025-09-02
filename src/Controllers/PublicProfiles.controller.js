@@ -23,7 +23,6 @@ const parseSort = (sortStr) => {
 };
 
 const getProfessionalByFullName = asynchandler(async (req, res) => {
-
   let { fullName } = req.params;
   if (!fullName) {
     throw new Apierror(400, "Full name is required");
@@ -48,7 +47,12 @@ const getProfessionalByFullName = asynchandler(async (req, res) => {
     throw new Apierror(404, "Professional not found");
   }
 
-  const professional = await Professional.findOne({ user: user._id }).lean();
+  const professional = await Professional.findOne({ user: user._id })
+    .populate({ path: "feedbacks", options: { sort: { createdAt: -1 } },populate: {
+      path: "asker", // Assuming "asker" is the user field in feedbacks
+      select: "firstName lastName profilePic email", 
+    } })
+    .lean();
   if (!professional) {
     throw new Apierror(404, "Professional profile not found");
   }
@@ -76,19 +80,23 @@ const getProfessionalByFullName = asynchandler(async (req, res) => {
     verified: professional.verified,
     joinedDate: professional.createdAt,
     featured: professional.featured,
-    feedbacks:professional.feedbacks,
+    feedbacks: professional.feedbacks,
     totalAnswers: 20,
     totalEarnings: 20,
     rating: professional.rating,
     ratingCount: professional.ratingCount,
     categories: Array.isArray(professional.selectedSpecializations)
-      ? professional.selectedSpecializations.map(s => s.specialization?.toString())
+      ? professional.selectedSpecializations.map((s) =>
+          s.specialization?.toString()
+        )
       : [],
   };
 
-  return res.status(200).json(
-    new Apiresponse(200, response, "Professional public profile retrieved")
-  );
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(200, response, "Professional public profile retrieved")
+    );
 });
 
 const listProfessionals = asynchandler(async (req, res) => {
@@ -141,15 +149,21 @@ const listProfessionals = asynchandler(async (req, res) => {
 
   if (country || req.query.country) {
     const countries = req.query.country
-      ? String(req.query.country).split(",").map((c) => c.trim()).filter(Boolean)
+      ? String(req.query.country)
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean)
       : [String(country)];
     if (countries.length) matchClauses.push({ country: { $in: countries } });
   }
 
-  if (featured !== undefined) matchClauses.push({ featured: String(featured) === "true" });
+  if (featured !== undefined)
+    matchClauses.push({ featured: String(featured) === "true" });
 
-  if (minPrice) matchClauses.push({ priceRangeLow: { $gte: Number(minPrice) } });
-  if (maxPrice) matchClauses.push({ priceRangeHigh: { $lte: Number(maxPrice) } });
+  if (minPrice)
+    matchClauses.push({ priceRangeLow: { $gte: Number(minPrice) } });
+  if (maxPrice)
+    matchClauses.push({ priceRangeHigh: { $lte: Number(maxPrice) } });
 
   // delivery: comma separated thresholds -> accept if deliveryTime <= any selected threshold
   if (req.query.delivery) {
@@ -179,7 +193,10 @@ const listProfessionals = asynchandler(async (req, res) => {
 
   // languages: require all selected languages (frontend uses language.every)
   if (req.query.language) {
-    const langs = String(req.query.language).split(",").map((l) => l.trim()).filter(Boolean);
+    const langs = String(req.query.language)
+      .split(",")
+      .map((l) => l.trim())
+      .filter(Boolean);
     if (langs.length) matchClauses.push({ languages: { $all: langs } });
   }
 
@@ -195,18 +212,23 @@ const listProfessionals = asynchandler(async (req, res) => {
   if (req.query.category) {
     const cat = String(req.query.category);
     if (mongoose.Types.ObjectId.isValid(cat)) {
-      matchClauses.push({ "selectedSpecializations.specialization": new mongoose.Types.ObjectId(cat) });
+      matchClauses.push({
+        "selectedSpecializations.specialization": new mongoose.Types.ObjectId(
+          cat
+        ),
+      });
     } else {
       matchClauses.push({
-        $or: [
-          { "selectedSpecializations.category": cat },
-          { tags: cat },
-        ],
+        $or: [{ "selectedSpecializations.category": cat }, { tags: cat }],
       });
     }
   } else if (category) {
     if (mongoose.Types.ObjectId.isValid(String(category))) {
-      matchClauses.push({ "selectedSpecializations.specialization": new mongoose.Types.ObjectId(String(category)) });
+      matchClauses.push({
+        "selectedSpecializations.specialization": new mongoose.Types.ObjectId(
+          String(category)
+        ),
+      });
     } else {
       matchClauses.push({
         $or: [
@@ -220,7 +242,7 @@ const listProfessionals = asynchandler(async (req, res) => {
   // create final profMatch as $and of clauses (if none - match all)
   const profMatch = matchClauses.length ? { $and: matchClauses } : {};
 
-  var ans=20;
+  var ans = 20;
   const excludeCurrentUser =
     req.user &&
     Array.isArray(req.user.roles) &&
@@ -229,7 +251,9 @@ const listProfessionals = asynchandler(async (req, res) => {
 
   const userMatch = { "user.roles": "professional" };
   if (excludeCurrentUser) {
-    userMatch["user._id"] = { $ne: new mongoose.Types.ObjectId(String(req.user._id)) };
+    userMatch["user._id"] = {
+      $ne: new mongoose.Types.ObjectId(String(req.user._id)),
+    };
   }
 
   const pipeline = [
@@ -243,7 +267,7 @@ const listProfessionals = asynchandler(async (req, res) => {
       },
     },
     { $unwind: "$user" },
-    
+
     {
       $lookup: {
         from: "feedbacks",
@@ -252,12 +276,9 @@ const listProfessionals = asynchandler(async (req, res) => {
           {
             $match: {
               $expr: {
-                $in: [
-                  "$_id",
-                  { $ifNull: ["$$fIds", []] }
-                ]
-              }
-            }
+                $in: ["$_id", { $ifNull: ["$$fIds", []] }],
+              },
+            },
           },
           { $sort: { createdAt: -1 } },
           // include asker basic info
@@ -266,8 +287,8 @@ const listProfessionals = asynchandler(async (req, res) => {
               from: "users",
               localField: "asker",
               foreignField: "_id",
-              as: "asker"
-            }
+              as: "asker",
+            },
           },
           { $unwind: { path: "$asker", preserveNullAndEmptyArrays: true } },
           {
@@ -281,23 +302,21 @@ const listProfessionals = asynchandler(async (req, res) => {
                 firstName: "$asker.firstName",
                 lastName: "$asker.lastName",
                 profilePic: "$asker.profilePic",
-                email: "$asker.email"
-              }
-            }
-          }
+                email: "$asker.email",
+              },
+            },
+          },
         ],
-        as: "feedbacks"
-      }
+        as: "feedbacks",
+      },
     },
-
-
 
     {
       // $match: {
       //   "user.roles": "professional",
-        
+
       // },
-      $match: userMatch
+      $match: userMatch,
     },
     {
       $facet: {
@@ -316,19 +335,20 @@ const listProfessionals = asynchandler(async (req, res) => {
               lastName: "$user.lastName",
               tags: 1,
               entityType: 1,
-              feedbacks:1,
+              feedbacks: 1,
               deliveryTime: 1,
               firmName: 1,
               exampleQuestions: 1,
               languages: 1,
               country: 1,
               priceRangeLow: 1,
-              about:1,
-              currency:1,
+              about: 1,
+              currency: 1,
+              professionalExperiences: 1,
               priceRangeHigh: 1,
-              isActive:"$user.isActive",
+              isActive: "$user.isActive",
               verified: 1,
-              joinedDate:"$createdAt",
+              joinedDate: "$createdAt",
               featured: 1,
               totalAnswers: { $literal: ans },
               totalEarnings: { $literal: ans },
@@ -362,8 +382,6 @@ const listProfessionals = asynchandler(async (req, res) => {
       aggResult[0].total[0] &&
       aggResult[0].total[0].count) ||
     0;
-  
-  
 
   return res
     .status(200)
@@ -597,5 +615,5 @@ export {
   getProfessionalsBySpecialization,
   listAskers,
   getAskerById,
-  getProfessionalByFullName
+  getProfessionalByFullName,
 };

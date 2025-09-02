@@ -15,6 +15,7 @@ const ProfessionalSchema = new mongoose.Schema(
       enum: ["individual", "firm"],
       default: "individual",
     },
+    professionalExperiences:[String],
     firmName: {
       type: String,
       trim: true,

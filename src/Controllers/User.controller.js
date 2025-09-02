@@ -357,6 +357,7 @@ const registerStep4 = asynchandler(async (req, res) => {
     "priceRangeHigh",
     "currency",
     "profilePicture",
+    "professionalExperiences",
     "location",
     "country",
     "tags",
@@ -755,8 +756,138 @@ const resetPassword = asynchandler(async (req, res) => {
   }
 });
 
+// const updateInfo = asynchandler(async (req, res) => {
+//   const { firstName, lastName } = req.body;
+//   const professionalPayload = req.body.professional || {};
+//   const profilePicPath = req.files?.profilePic?.[0];
+
+//   let profilePicUrl = null;
+//   if (profilePicPath) {
+//     const uploaded = await uploadOnS3(profilePicPath);
+//     if (uploaded) {
+//       profilePicUrl = `https://${uploaded.bucket}.s3.amazonaws.com/${uploaded.key}`;
+//     }
+//   }
+
+//   if (typeof professionalPayload.selectedSpecializations === "string") {
+//     try {
+//       professionalPayload.selectedSpecializations = JSON.parse(
+//         professionalPayload.selectedSpecializations
+//       );
+//     } catch (err) {
+//       professionalPayload.selectedSpecializations = [];
+//     }
+//   }
+
+//   const parseIfString = (val) => {
+//   if (typeof val === "string") {
+//     try {
+//       return JSON.parse(val);
+//     } catch {
+//       return [];
+//     }
+//   }
+//   return val;
+// };
+
+// // Parse all array/object fields from both professionalPayload and req.body
+// const arrayFields = [
+//   "selectedSpecializations",
+//   "languages",
+//   "locations",
+//   "tags",
+//   "exampleQuestions"
+// ];
+
+// arrayFields.forEach((field) => {
+//   professionalPayload[field] = parseIfString(professionalPayload[field]);
+//   req.body[field] = parseIfString(req.body[field]);
+// });
+
+//   const userUpdate = {};
+//   if (firstName) userUpdate.firstName = firstName;
+//   if (lastName) userUpdate.lastName = lastName;
+//   if (profilePicUrl) userUpdate.profilePic = profilePicUrl;
+
+//   const updatedUser = await Users.findByIdAndUpdate(
+//     req.user._id,
+//     { $set: userUpdate },
+//     { new: true, runValidators: true }
+//   ).select("-password -refreshToken");
+
+//   if (!updatedUser) {
+//     throw new Apierror(404, "User not found");
+//   }
+
+//   let updatedProfessional = null;
+//   if (updatedUser.activeRole === "professional") {
+//     const allowed = [
+//       "title",
+//       "about",
+//       "selectedSpecializations",
+//       "exampleQuestions",
+//       "languages",
+//       "priceRangeLow",
+//       "priceRangeHigh",
+//       "currency",
+//       "profilePicture",
+//       "location",
+//       "country",
+//       "tags",
+//       "subcategories",
+//       "verified",
+//       "featured",
+//       "deliveryTime",
+//       "entityType",
+//       "firmName",
+//     ];
+
+//     const toSet = {};
+//     for (const key of allowed) {
+//       if (Object.prototype.hasOwnProperty.call(professionalPayload, key)) {
+//         toSet[key] = professionalPayload[key];
+//       } else if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+//         toSet[key] = req.body[key];
+//       }
+//     }
+
+//     // ensure profilePicture is set from uploaded pic when not provided explicitly
+//     if (profilePicUrl && !toSet.profilePicture)
+//       toSet.profilePicture = profilePicUrl;
+
+//     if (Object.keys(toSet).length) {
+//       if (updatedUser.professional) {
+//         updatedProfessional = await Professional.findByIdAndUpdate(
+//           updatedUser.professional,
+//           { $set: toSet },
+//           { new: true, runValidators: true }
+//         );
+//       } else {
+//         updatedProfessional = await Professional.create({
+//           user: updatedUser._id,
+//           ...toSet,
+//         });
+//         updatedUser.professional = updatedProfessional._id;
+//         await updatedUser.save();
+//       }
+//     } else if (updatedUser.professional) {
+//       updatedProfessional = await Professional.findById(
+//         updatedUser.professional
+//       );
+//     }
+//   }
+
+//   const payload = { user: updatedUser };
+//   if (updatedProfessional) payload.professional = updatedProfessional;
+
+//   res
+//     .status(200)
+//     .json(new Apiresponse(200, payload, "Profile updated successfully"));
+// });
+
+
 const updateInfo = asynchandler(async (req, res) => {
-  const { firstName, lastName } = req.body;
+  const { firstName, lastName, description, priceRangeLow, priceRangeHigh, currency, entityType, firmName } = req.body;
   const professionalPayload = req.body.professional || {};
   const profilePicPath = req.files?.profilePic?.[0];
 
@@ -768,40 +899,30 @@ const updateInfo = asynchandler(async (req, res) => {
     }
   }
 
-  if (typeof professionalPayload.selectedSpecializations === "string") {
-    try {
-      professionalPayload.selectedSpecializations = JSON.parse(
-        professionalPayload.selectedSpecializations
-      );
-    } catch (err) {
-      professionalPayload.selectedSpecializations = [];
-    }
-  }
-
   const parseIfString = (val) => {
-  if (typeof val === "string") {
-    try {
-      return JSON.parse(val);
-    } catch {
-      return [];
+    if (typeof val === "string") {
+      try {
+        return JSON.parse(val);
+      } catch {
+        return [];
+      }
     }
-  }
-  return val;
-};
+    return val;
+  };
 
-// Parse all array/object fields from both professionalPayload and req.body
-const arrayFields = [
-  "selectedSpecializations",
-  "languages",
-  "locations",
-  "tags",
-  "exampleQuestions"
-];
+  // Parse all array/object fields from req.body
+  const arrayFields = [
+    "languages",
+    "locations",
+    "tags",
+    "selectedSpecializations",
+    "professionalExperiences",
+    "exampleQuestions",
+  ];
 
-arrayFields.forEach((field) => {
-  professionalPayload[field] = parseIfString(professionalPayload[field]);
-  req.body[field] = parseIfString(req.body[field]);
-});
+  arrayFields.forEach((field) => {
+    req.body[field] = parseIfString(req.body[field]);
+  });
 
   const userUpdate = {};
   if (firstName) userUpdate.firstName = firstName;
@@ -821,38 +942,40 @@ arrayFields.forEach((field) => {
   let updatedProfessional = null;
   if (updatedUser.activeRole === "professional") {
     const allowed = [
-      "title",
       "about",
       "selectedSpecializations",
       "exampleQuestions",
+      "professionalExperiences",
       "languages",
       "priceRangeLow",
       "priceRangeHigh",
       "currency",
       "profilePicture",
-      "location",
-      "country",
+      "locations",
       "tags",
-      "subcategories",
-      "verified",
-      "featured",
-      "deliveryTime",
       "entityType",
       "firmName",
     ];
 
     const toSet = {};
     for (const key of allowed) {
-      if (Object.prototype.hasOwnProperty.call(professionalPayload, key)) {
-        toSet[key] = professionalPayload[key];
-      } else if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+      if (Object.prototype.hasOwnProperty.call(req.body, key)) {
         toSet[key] = req.body[key];
       }
     }
 
-    // ensure profilePicture is set from uploaded pic when not provided explicitly
-    if (profilePicUrl && !toSet.profilePicture)
+    if (req.body.locations) {
+      toSet.country = req.body.locations; // Assign locations to country
+    }
+    if(req.body.professionalExperiences){
+      console.log("professionalExperiences",req.body.professionalExperiences);
+      toSet.professionalExperiences = req.body.professionalExperiences;
+    }
+
+    // Ensure profilePicture is set from uploaded pic when not provided explicitly
+    if (profilePicUrl && !toSet.profilePicture) {
       toSet.profilePicture = profilePicUrl;
+    }
 
     if (Object.keys(toSet).length) {
       if (updatedUser.professional) {
@@ -870,9 +993,7 @@ arrayFields.forEach((field) => {
         await updatedUser.save();
       }
     } else if (updatedUser.professional) {
-      updatedProfessional = await Professional.findById(
-        updatedUser.professional
-      );
+      updatedProfessional = await Professional.findById(updatedUser.professional);
     }
   }
 
@@ -883,6 +1004,7 @@ arrayFields.forEach((field) => {
     .status(200)
     .json(new Apiresponse(200, payload, "Profile updated successfully"));
 });
+
 
 const toggleActiveRole = asynchandler(async (req, res) => {
   const { activeRole } = req.body;
