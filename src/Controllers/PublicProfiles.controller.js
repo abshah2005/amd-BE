@@ -140,19 +140,6 @@ const listProfessionals = asynchandler(async (req, res) => {
       ],
     });
   }
-
-  //   if (name) {
-  //   console.log(name);
-  //   const nameRegex = new RegExp(String(name).trim(), "i");
-  //   console.log(nameRegex);
-  //   matchClauses.push({
-  //     $or: [
-  //       { "user.firstName": nameRegex },
-  //       { "user.lastName": nameRegex },
-  //     ],
-  //   });
-  // }
-
   if (name) {
     nameRegex = new RegExp(String(name).trim(), "i");
   }
@@ -280,42 +267,56 @@ const listProfessionals = asynchandler(async (req, res) => {
 
   const pipeline = [
     { $match: profMatch },
-    // {
-    //   $lookup: {
-    //     from: "users",
-    //     localField: "user",
-    //     foreignField: "_id",
-    //     as: "user",
-    //   },
-    // },
-    // { $unwind: "$user" },
     {
-      $lookup: {
-        from: "users",
-        let: { userId: "$user" },
-        pipeline: [
-          {
-            $match: {
-              $expr: { $eq: ["$_id", "$$userId"] },
-            },
-          },
-          ...(name
-            ? [
-                {
-                  $match: {
-                    $or: [
-                      { firstName: new RegExp(String(name).trim(), "i") },
-                      { lastName: new RegExp(String(name).trim(), "i") },
-                    ],
-                  },
-                },
-              ]
-            : []),
-        ],
-        as: "user",
+  $lookup: {
+    from: "users",
+    let: { userId: "$user" },
+    pipeline: [
+      {
+        $match: {
+          $expr: { $eq: ["$_id", "$$userId"] },
+        },
       },
-    },
-    { $unwind: "$user" },
+    ],
+    as: "user",
+  },
+},
+{ $unwind: "$user" },
+
+// 👇 Add this block right after $unwind
+...(name
+  ? [
+      {
+        $addFields: {
+          fullNameConcat: {
+            $toLower: { $concat: ["$user.firstName", "$user.lastName"] },
+          },
+          fullNameSpaced: {
+            $toLower: { $concat: ["$user.firstName", " ", "$user.lastName"] },
+          },
+        },
+      },
+      {
+        $match: {
+          $or: [
+            {
+              fullNameConcat: {
+                $regex: String(name).replace(/\s+/g, "").toLowerCase(),
+              },
+            },
+            {
+              fullNameSpaced: {
+                $regex: String(name).toLowerCase(),
+              },
+            },
+            { "user.firstName": { $regex: String(name), $options: "i" } },
+            { "user.lastName": { $regex: String(name), $options: "i" } },
+          ],
+        },
+      },
+    ]
+  : []),
+
 
     {
       $lookup: {
@@ -361,10 +362,6 @@ const listProfessionals = asynchandler(async (req, res) => {
     },
 
     {
-      // $match: {
-      //   "user.roles": "professional",
-
-      // },
       $match: userMatch,
     },
     {
