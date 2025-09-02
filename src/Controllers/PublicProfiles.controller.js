@@ -48,10 +48,14 @@ const getProfessionalByFullName = asynchandler(async (req, res) => {
   }
 
   const professional = await Professional.findOne({ user: user._id })
-    .populate({ path: "feedbacks", options: { sort: { createdAt: -1 } },populate: {
-      path: "asker", // Assuming "asker" is the user field in feedbacks
-      select: "firstName lastName profilePic email", 
-    } })
+    .populate({
+      path: "feedbacks",
+      options: { sort: { createdAt: -1 } },
+      populate: {
+        path: "asker", // Assuming "asker" is the user field in feedbacks
+        select: "firstName lastName profilePic email",
+      },
+    })
     .lean();
   if (!professional) {
     throw new Apierror(404, "Professional profile not found");
@@ -101,6 +105,7 @@ const getProfessionalByFullName = asynchandler(async (req, res) => {
 
 const listProfessionals = asynchandler(async (req, res) => {
   const {
+    name,
     page = 1,
     limit = 20,
     q,
@@ -118,6 +123,7 @@ const listProfessionals = asynchandler(async (req, res) => {
   const lim = Math.max(1, Math.min(100, Number(limit)));
   const skip = (pageNum - 1) * lim;
   const sortObj = parseSort(sort);
+  var nameRegex;
 
   // Build match clauses (supports multiple filters; multi-values are comma separated)
   const matchClauses = [];
@@ -133,6 +139,22 @@ const listProfessionals = asynchandler(async (req, res) => {
         { associated: re },
       ],
     });
+  }
+
+  //   if (name) {
+  //   console.log(name);
+  //   const nameRegex = new RegExp(String(name).trim(), "i");
+  //   console.log(nameRegex);
+  //   matchClauses.push({
+  //     $or: [
+  //       { "user.firstName": nameRegex },
+  //       { "user.lastName": nameRegex },
+  //     ],
+  //   });
+  // }
+
+  if (name) {
+    nameRegex = new RegExp(String(name).trim(), "i");
   }
 
   // tags: comma separated -> require all selected tags to be present
@@ -258,11 +280,38 @@ const listProfessionals = asynchandler(async (req, res) => {
 
   const pipeline = [
     { $match: profMatch },
+    // {
+    //   $lookup: {
+    //     from: "users",
+    //     localField: "user",
+    //     foreignField: "_id",
+    //     as: "user",
+    //   },
+    // },
+    // { $unwind: "$user" },
     {
       $lookup: {
         from: "users",
-        localField: "user",
-        foreignField: "_id",
+        let: { userId: "$user" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$_id", "$$userId"] },
+            },
+          },
+          ...(name
+            ? [
+                {
+                  $match: {
+                    $or: [
+                      { firstName: new RegExp(String(name).trim(), "i") },
+                      { lastName: new RegExp(String(name).trim(), "i") },
+                    ],
+                  },
+                },
+              ]
+            : []),
+        ],
         as: "user",
       },
     },
