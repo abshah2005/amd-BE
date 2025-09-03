@@ -17,7 +17,6 @@ const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
   process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
 );
 
-
 // helper: populate users and send emails to both parties (non-blocking)
 async function notifyStatusChange(question, status, customMessage, actionUrl) {
   try {
@@ -25,10 +24,13 @@ async function notifyStatusChange(question, status, customMessage, actionUrl) {
     await question.populate([
       {
         path: "professional",
-        populate: { path: "user", select: "firstName lastName email profilePic" },
-      },      
+        populate: {
+          path: "user",
+          select: "firstName lastName email profilePic",
+        },
+      },
     ]);
-    await question.populate("asker")
+    await question.populate("asker");
 
     const asker = question.asker;
     const professionalUser = question.professional?.user;
@@ -61,7 +63,6 @@ async function notifyStatusChange(question, status, customMessage, actionUrl) {
   }
 }
 
-
 export const createQuestion = asynchandler(async (req, res) => {
   const {
     title,
@@ -71,9 +72,16 @@ export const createQuestion = asynchandler(async (req, res) => {
     editorState,
     budget,
   } = req.body;
+  // let attachmentsList = [];
+  // if (req.files?.attachments) {
+  //   attachmentsList = await handleAttachments(req.files.attachments);
+  // }
   let attachmentsList = [];
   if (req.files?.attachments) {
-    attachmentsList = await handleAttachments(req.files.attachments);
+    const files = Array.isArray(req.files.attachments)
+    ? req.files.attachments
+    : [req.files.attachments];  
+    attachmentsList = await handleAttachments(files);
   }
   if (!title || !body || !professionalId)
     throw new Apierror(400, "title, body, professionalId required");
@@ -124,7 +132,7 @@ export const rejectQuestion = asynchandler(async (req, res) => {
     note: message ? message : "Sorry i cant Answer this Question",
   });
   await q.save();
-    notifyStatusChange(q, "rejected", message).catch(() => {});
+  notifyStatusChange(q, "rejected", message).catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Question rejected"));
 });
 
@@ -163,10 +171,18 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
 
   q.quote = {
     normal: normalAmount
-      ? { amount: normalAmount, createdAt: new Date(), message: "Normal delivery quote" }
+      ? {
+          amount: normalAmount,
+          createdAt: new Date(),
+          message: "Normal delivery quote",
+        }
       : undefined,
     fast: fastAmount
-      ? { amount: fastAmount, createdAt: new Date(), message: "Fast delivery quote" }
+      ? {
+          amount: fastAmount,
+          createdAt: new Date(),
+          message: "Fast delivery quote",
+        }
       : undefined,
   };
 
@@ -179,10 +195,10 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "approved_and_quoted",
     by: req.user._id,
-    note: `Quotes posted: normal $${normalAmount || "-"}, fast $${fastAmount || "-"}`,
+    note: `Quotes posted: normal $${normalAmount || "-"}, fast $${
+      fastAmount || "-"
+    }`,
   });
-
-
 
   await q.save();
   notifyStatusChange(q, "quoted").catch(() => {});
@@ -191,16 +207,18 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, q, "Quotes posted for both delivery types"));
 });
 
-
-
 export const payQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { deliveryType } = req.body; 
+  const { deliveryType } = req.body;
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
     throw new Apierror(403, "Not asker");
-  if (q.status !== "approved" && q.status !== "quoted" && q.status !== "awaiting_payment")
+  if (
+    q.status !== "approved" &&
+    q.status !== "quoted" &&
+    q.status !== "awaiting_payment"
+  )
     throw new Apierror(400, "Not approved or quoted yet");
 
   let price = 0;
@@ -247,23 +265,22 @@ export const payQuestion = asynchandler(async (req, res) => {
     );
 });
 
-
 export const paidStatusQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
 
   const q = await Question.findById(id);
   if (q) {
-      q.payment.paid = true;
-      q.payment.paidAt = new Date();
-      q.status = "paid";
-      q.timeline.push({
-        at: new Date(),
-        status: "paid",
-        by: q.asker,
-        note: "Your payment is complete! 🎉 We've notified the professional — they'll review your question and respond within the selected delivery time.",
-      });
-      await q.save();
-    }
+    q.payment.paid = true;
+    q.payment.paidAt = new Date();
+    q.status = "paid";
+    q.timeline.push({
+      at: new Date(),
+      status: "paid",
+      by: q.asker,
+      note: "Your payment is complete! 🎉 We've notified the professional — they'll review your question and respond within the selected delivery time.",
+    });
+    await q.save();
+  }
 
   await q.save();
   notifyStatusChange(q, "paid").catch(() => {});
@@ -327,7 +344,7 @@ export const postAnswer = asynchandler(async (req, res) => {
     });
     q.status = "answered";
     q.thread.followUpWindowExpiresAt = new Date(Date.now() + 48 * 3600 * 1000);
-  } else if (q.status === "in_thread" || q.status ==="answered" ) {
+  } else if (q.status === "in_thread" || q.status === "answered") {
     // Follow-up answer logic
     if (
       !q.thread.followUpWindowExpiresAt ||
@@ -356,9 +373,10 @@ export const postAnswer = asynchandler(async (req, res) => {
   if (q.status === "answered") {
     notifyStatusChange(q, "answered").catch(() => {});
   }
-  return res.status(200).json(new Apiresponse(200, q, "Answer posted successfully"));
+  return res
+    .status(200)
+    .json(new Apiresponse(200, q, "Answer posted successfully"));
 });
-
 
 // Asker posts follow-up (within 48h window)
 export const postFollowUp = asynchandler(async (req, res) => {
@@ -436,7 +454,7 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 // Professional closes thread (payout logic)
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const {body} =req.body;
+  const { body } = req.body;
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (q.status === "closed") throw new Apierror(400, "Already closed");
@@ -466,14 +484,15 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
   await q.save();
 
   if (q.professional.professionalStripeId) {
-    
     await stripe.transfers.create({
       amount: Math.round(payoutAmount * 100),
       currency: "usd",
       destination: q.professional.professionalStripeId,
       metadata: { questionId: q._id.toString() },
     });
-    console.log(`Initiating payout of $${payoutAmount} to professional ${q.professional._id}`);
+    console.log(
+      `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
+    );
   }
   notifyStatusChange(q, "closed", body).catch(() => {});
   return res
@@ -522,7 +541,7 @@ export const submitFeedback = asynchandler(async (req, res) => {
   const prof = await Professional.findById(q.professional).populate(
     "feedbacks"
   );
-  q.feedback=feedback._id;
+  q.feedback = feedback._id;
   await q.save();
   const ratings = prof.feedbacks.map((fb) => fb.rating);
   prof.rating = ratings.reduce((a, b) => a + b, 0) / ratings.length;
@@ -537,7 +556,7 @@ export const submitFeedback = asynchandler(async (req, res) => {
 // Get question by ID endpoint - add this with your other exports
 export const getQuestionById = asynchandler(async (req, res) => {
   const { id } = req.params;
-  
+
   if (!id) {
     throw new Apierror(400, "Question ID is required");
   }
@@ -546,39 +565,38 @@ export const getQuestionById = asynchandler(async (req, res) => {
       path: "professional",
       populate: {
         path: "user",
-        select: "firstName lastName profilePic" 
-      }
+        select: "firstName lastName profilePic",
+      },
     })
     .populate({
       path: "asker",
-      select: "firstName lastName profilePic"
+      select: "firstName lastName profilePic",
     })
     .populate({
       path: "thread.messages.sender",
-      select: "firstName lastName profilePic"
+      select: "firstName lastName profilePic",
     })
     .populate("feedback");
-    
 
   if (!question) {
     throw new Apierror(404, "Question not found");
   }
 
   const isAsker = String(question.asker._id) === String(req.user._id);
-  const isProfessional = req.user.professional && 
+  const isProfessional =
+    req.user.professional &&
     String(question.professional._id) === String(req.user.professional._id);
-  
+
   if (!isAsker && !isProfessional && req.user.role !== "admin") {
-    throw new Apierror(403, "You don't have permission to access this question");
+    throw new Apierror(
+      403,
+      "You don't have permission to access this question"
+    );
   }
 
-  return res.status(200).json(
-    new Apiresponse(
-      200,
-      question,
-      "Question retrieved successfully"
-    )
-  );
+  return res
+    .status(200)
+    .json(new Apiresponse(200, question, "Question retrieved successfully"));
 });
 
 export const listQuestions = asynchandler(async (req, res) => {
