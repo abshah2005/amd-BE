@@ -48,6 +48,7 @@ const ProfessionalSchema = new mongoose.Schema(
     ],
     subcategories: [String],
     tags: [String],
+    socialLinks: [String],
     priceRangeLow: Number,
     priceRangeHigh: Number,
     currency: { type: String, default: "$" },

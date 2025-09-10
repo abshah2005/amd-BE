@@ -352,6 +352,7 @@ const registerStep4 = asynchandler(async (req, res) => {
     "selectedSpecializations",
     "exampleQuestions",
     "languages",
+    "socialLinks",
     "deliveryTime",
     "priceRangeLow",
     "priceRangeHigh",
@@ -917,6 +918,7 @@ const updateInfo = asynchandler(async (req, res) => {
     "tags",
     "selectedSpecializations",
     "professionalExperiences",
+    "socialLinks",
     "exampleQuestions",
   ];
 
@@ -946,6 +948,7 @@ const updateInfo = asynchandler(async (req, res) => {
       "selectedSpecializations",
       "exampleQuestions",
       "professionalExperiences",
+      "socialLinks",
       "languages",
       "priceRangeLow",
       "priceRangeHigh",
@@ -1066,6 +1069,57 @@ const uploadFile = asynchandler(async (req, res) => {
         "File uploaded successfully"
       )
     );
+});
+
+export const deleteProfessionalAccount = asynchandler(async (req, res) => {
+  const user = await Users.findById(req.user._id).populate("professional");
+  if (!user) throw new Apierror(404, "User not found");
+
+  if (!user.professional) {
+    throw new Apierror(400, "User is not a professional");
+  }
+
+  // Delete associated professional data
+  await Professional.findByIdAndDelete(user.professional._id);
+
+  // Remove professional reference from user
+  user.professional = null;
+  user.roles = user.roles.filter((role) => role !== "professional");
+  if (user.activeRole === "professional") {
+    user.activeRole = null;
+  }
+
+  await user.save();
+
+  return res
+    .status(200)
+    .json(new Apiresponse(200, null, "Professional account deleted successfully"));
+});
+
+
+export const deleteAskerAccount = asynchandler(async (req, res) => {
+  const user = await Users.findById(req.user._id).populate("asker");
+  if (!user) throw new Apierror(404, "User not found");
+
+  if (!user.asker) {
+    throw new Apierror(400, "User is not an asker");
+  }
+
+  // Delete associated asker data
+  await Asker.findByIdAndDelete(user.asker._id);
+
+  // Remove asker reference from user
+  user.asker = null;
+  user.roles = user.roles.filter((role) => role !== "asker");
+  if (user.activeRole === "asker") {
+    user.activeRole = null;
+  }
+
+  await user.save();
+
+  return res
+    .status(200)
+    .json(new Apiresponse(200, null, "Asker account deleted successfully"));
 });
 
 export {

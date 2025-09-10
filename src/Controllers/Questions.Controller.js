@@ -72,15 +72,11 @@ export const createQuestion = asynchandler(async (req, res) => {
     editorState,
     budget,
   } = req.body;
-  // let attachmentsList = [];
-  // if (req.files?.attachments) {
-  //   attachmentsList = await handleAttachments(req.files.attachments);
-  // }
   let attachmentsList = [];
   if (req.files?.attachments) {
     const files = Array.isArray(req.files.attachments)
-    ? req.files.attachments
-    : [req.files.attachments];  
+      ? req.files.attachments
+      : [req.files.attachments];
     attachmentsList = await handleAttachments(files);
   }
   if (!title || !body || !professionalId)
@@ -129,11 +125,34 @@ export const rejectQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "rejected",
     by: req.user._id,
-    note: message ? message : "Sorry i cant Answer this Question",
+    note: message ? message : "Sorry, I cannot answer this question.",
   });
   await q.save();
   notifyStatusChange(q, "rejected", message).catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Question rejected"));
+});
+
+
+export const deleteQuestion = asynchandler(async (req, res) => {
+  const { id } = req.params;
+
+  const question = await Question.findById(id);
+  if (!question) throw new Apierror(404, "Question not found");
+
+  // Ensure only the asker or admin can delete the question
+  if (
+    String(question.asker) !== String(req.user._id) &&
+    req.user.role !== "admin"
+  ) {
+    throw new Apierror(403, "You don't have permission to delete this question");
+  }
+
+  // Delete the question
+  await Question.findByIdAndDelete(id);
+
+  return res
+    .status(200)
+    .json(new Apiresponse(200, null, "Question deleted successfully"));
 });
 
 export const approveQuestion = asynchandler(async (req, res) => {
