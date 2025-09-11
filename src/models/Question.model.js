@@ -57,6 +57,7 @@ const QuestionSchema = new mongoose.Schema(
     },
     answerBy: { type: Date },
     answerByNormal: { type: Date },
+    isDeleted: { type: Boolean, default: false },
     answerByFast: { type: Date },
     editorState: { type: String },
     attachments: [String],

@@ -13,7 +13,8 @@ import {
   submitFeedback,
   getQuestionById,
   approveQuestion,
-  paidStatusQuestion
+  paidStatusQuestion,
+  deleteQuestion
 } from "../Controllers/Questions.Controller.js";
 import { verifyJWT,trackActive } from "../middlewares/Authentication.middleware.js";
 import { upload } from "../middlewares/Multer.middleware.js";
@@ -35,5 +36,6 @@ router.get("/", verifyJWT, trackActive,listQuestions);
 router.post("/:id/answer-followup", verifyJWT, trackActive,upload.fields([{ name: "attachments", maxCount: 5 }]), answerFollowUp);
 router.post("/:id/feedback", verifyJWT, trackActive,submitFeedback);
 router.get("/:id",verifyJWT,trackActive,getQuestionById);
+router.delete("/:id", verifyJWT, trackActive,deleteQuestion)
 
 export default router;

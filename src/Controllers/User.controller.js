@@ -379,6 +379,10 @@ const registerStep4 = asynchandler(async (req, res) => {
   if (profilePicUrl && !profData.profilePicture)
     profData.profilePicture = profilePicUrl;
 
+  if (user.authProvider === "linkedin") {
+    profData.verified = true;
+  }
+
   let professionalDoc = null;
   if (Object.keys(profData).length) {
     if (user.professional) {
@@ -546,6 +550,15 @@ const linkedinCallback = asynchandler(async (req, res) => {
         profilePic: user.profilePic,
         authProvider: "linkedin",
       };
+      
+      if (user.roles.includes("professional")) {
+        const professional = await Professional.findOne({ user: user._id });
+        if (professional) {
+          professional.verified = true;
+          await professional.save();
+        }
+      }
+
       if (!user.password) {
         updateFields.password = await bcrypt.hash(tempPassword, 10);
       }
@@ -678,7 +691,7 @@ const Loginuser = asynchandler(async (req, res) => {
 const LogoutUser = asynchandler(async (req, res) => {
   const user = await Users.findByIdAndUpdate(
     req.user?._id,
-    { $unset: { refreshToken: 1 },isActive:false,lastActiveAt:new Date() },
+    { $unset: { refreshToken: 1 }, isActive: false, lastActiveAt: new Date() },
     { new: true }
   );
   if (!user) {
@@ -757,138 +770,17 @@ const resetPassword = asynchandler(async (req, res) => {
   }
 });
 
-// const updateInfo = asynchandler(async (req, res) => {
-//   const { firstName, lastName } = req.body;
-//   const professionalPayload = req.body.professional || {};
-//   const profilePicPath = req.files?.profilePic?.[0];
-
-//   let profilePicUrl = null;
-//   if (profilePicPath) {
-//     const uploaded = await uploadOnS3(profilePicPath);
-//     if (uploaded) {
-//       profilePicUrl = `https://${uploaded.bucket}.s3.amazonaws.com/${uploaded.key}`;
-//     }
-//   }
-
-//   if (typeof professionalPayload.selectedSpecializations === "string") {
-//     try {
-//       professionalPayload.selectedSpecializations = JSON.parse(
-//         professionalPayload.selectedSpecializations
-//       );
-//     } catch (err) {
-//       professionalPayload.selectedSpecializations = [];
-//     }
-//   }
-
-//   const parseIfString = (val) => {
-//   if (typeof val === "string") {
-//     try {
-//       return JSON.parse(val);
-//     } catch {
-//       return [];
-//     }
-//   }
-//   return val;
-// };
-
-// // Parse all array/object fields from both professionalPayload and req.body
-// const arrayFields = [
-//   "selectedSpecializations",
-//   "languages",
-//   "locations",
-//   "tags",
-//   "exampleQuestions"
-// ];
-
-// arrayFields.forEach((field) => {
-//   professionalPayload[field] = parseIfString(professionalPayload[field]);
-//   req.body[field] = parseIfString(req.body[field]);
-// });
-
-//   const userUpdate = {};
-//   if (firstName) userUpdate.firstName = firstName;
-//   if (lastName) userUpdate.lastName = lastName;
-//   if (profilePicUrl) userUpdate.profilePic = profilePicUrl;
-
-//   const updatedUser = await Users.findByIdAndUpdate(
-//     req.user._id,
-//     { $set: userUpdate },
-//     { new: true, runValidators: true }
-//   ).select("-password -refreshToken");
-
-//   if (!updatedUser) {
-//     throw new Apierror(404, "User not found");
-//   }
-
-//   let updatedProfessional = null;
-//   if (updatedUser.activeRole === "professional") {
-//     const allowed = [
-//       "title",
-//       "about",
-//       "selectedSpecializations",
-//       "exampleQuestions",
-//       "languages",
-//       "priceRangeLow",
-//       "priceRangeHigh",
-//       "currency",
-//       "profilePicture",
-//       "location",
-//       "country",
-//       "tags",
-//       "subcategories",
-//       "verified",
-//       "featured",
-//       "deliveryTime",
-//       "entityType",
-//       "firmName",
-//     ];
-
-//     const toSet = {};
-//     for (const key of allowed) {
-//       if (Object.prototype.hasOwnProperty.call(professionalPayload, key)) {
-//         toSet[key] = professionalPayload[key];
-//       } else if (Object.prototype.hasOwnProperty.call(req.body, key)) {
-//         toSet[key] = req.body[key];
-//       }
-//     }
-
-//     // ensure profilePicture is set from uploaded pic when not provided explicitly
-//     if (profilePicUrl && !toSet.profilePicture)
-//       toSet.profilePicture = profilePicUrl;
-
-//     if (Object.keys(toSet).length) {
-//       if (updatedUser.professional) {
-//         updatedProfessional = await Professional.findByIdAndUpdate(
-//           updatedUser.professional,
-//           { $set: toSet },
-//           { new: true, runValidators: true }
-//         );
-//       } else {
-//         updatedProfessional = await Professional.create({
-//           user: updatedUser._id,
-//           ...toSet,
-//         });
-//         updatedUser.professional = updatedProfessional._id;
-//         await updatedUser.save();
-//       }
-//     } else if (updatedUser.professional) {
-//       updatedProfessional = await Professional.findById(
-//         updatedUser.professional
-//       );
-//     }
-//   }
-
-//   const payload = { user: updatedUser };
-//   if (updatedProfessional) payload.professional = updatedProfessional;
-
-//   res
-//     .status(200)
-//     .json(new Apiresponse(200, payload, "Profile updated successfully"));
-// });
-
-
 const updateInfo = asynchandler(async (req, res) => {
-  const { firstName, lastName, description, priceRangeLow, priceRangeHigh, currency, entityType, firmName } = req.body;
+  const {
+    firstName,
+    lastName,
+    description,
+    priceRangeLow,
+    priceRangeHigh,
+    currency,
+    entityType,
+    firmName,
+  } = req.body;
   const professionalPayload = req.body.professional || {};
   const profilePicPath = req.files?.profilePic?.[0];
 
@@ -970,8 +862,8 @@ const updateInfo = asynchandler(async (req, res) => {
     if (req.body.locations) {
       toSet.country = req.body.locations; // Assign locations to country
     }
-    if(req.body.professionalExperiences){
-      console.log("professionalExperiences",req.body.professionalExperiences);
+    if (req.body.professionalExperiences) {
+      console.log("professionalExperiences", req.body.professionalExperiences);
       toSet.professionalExperiences = req.body.professionalExperiences;
     }
 
@@ -996,7 +888,9 @@ const updateInfo = asynchandler(async (req, res) => {
         await updatedUser.save();
       }
     } else if (updatedUser.professional) {
-      updatedProfessional = await Professional.findById(updatedUser.professional);
+      updatedProfessional = await Professional.findById(
+        updatedUser.professional
+      );
     }
   }
 
@@ -1007,7 +901,6 @@ const updateInfo = asynchandler(async (req, res) => {
     .status(200)
     .json(new Apiresponse(200, payload, "Profile updated successfully"));
 });
-
 
 const toggleActiveRole = asynchandler(async (req, res) => {
   const { activeRole } = req.body;
@@ -1093,9 +986,10 @@ export const deleteProfessionalAccount = asynchandler(async (req, res) => {
 
   return res
     .status(200)
-    .json(new Apiresponse(200, null, "Professional account deleted successfully"));
+    .json(
+      new Apiresponse(200, null, "Professional account deleted successfully")
+    );
 });
-
 
 export const deleteAskerAccount = asynchandler(async (req, res) => {
   const user = await Users.findById(req.user._id).populate("asker");
@@ -1122,11 +1016,124 @@ export const deleteAskerAccount = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, null, "Asker account deleted successfully"));
 });
 
+const toggleProfessionalStatus = asynchandler(async (req, res) => {
+  const { professionalId, featured } = req.body;
+
+  if (!professionalId) {
+    throw new Apierror(400, "Professional ID is required");
+  }
+
+  const professional = await Professional.findById(professionalId);
+  if (!professional) {
+    throw new Apierror(404, "Professional not found");
+  }
+
+  if (featured !== undefined) {
+    professional.featured = featured;
+  }
+
+  await professional.save();
+
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        professionalId: professional._id,
+        featured: professional.featured,
+      },
+      "Professional status updated successfully"
+    )
+  );
+});
+
+const linkLinkedInAccount = asynchandler(async (req, res) => {
+  const { code, userId } = req.body;
+
+  if (!code) {
+    throw new Apierror(400, "Authorization code is required");
+  }
+
+  if (!userId) {
+    throw new Apierror(400, "User ID is required");
+  }
+
+  try {
+    // Step 1: Exchange authorization code for access token
+    const tokenResponse = await axios.post(
+      "https://www.linkedin.com/oauth/v2/accessToken",
+      new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: process.env.LINKEDIN_LINK_CALLBACK_URL,
+        client_id: process.env.LINKEDIN_CLIENT_ID,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET,
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+
+    const accessToken = tokenResponse.data.access_token;
+
+    // Step 2: Fetch user info from LinkedIn
+    const userInfoResponse = await axios.get(
+      "https://api.linkedin.com/v2/userinfo",
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    const userInfo = userInfoResponse.data;
+    const firstName = userInfo.given_name || userInfo.firstName || "Unknown";
+    const lastName = userInfo.family_name || userInfo.lastName || "Unknown";
+    const profilePicUrl = userInfo.picture || "";
+
+    // Step 3: Find the user by userId
+    const user = await Users.findById(userId);
+    if (!user) {
+      throw new Apierror(404, "User not found");
+    }
+
+    // Step 4: Ensure the user is a professional
+    if (!user.roles.includes("professional")) {
+      throw new Apierror(400, "User is not a professional");
+    }
+
+    // Step 5: Update the user's LinkedIn details
+    const updateFields = {
+      authProvider: "linkedin",
+      firstName: user.firstName || firstName,
+      lastName: user.lastName || lastName,
+      profilePic: user.profilePic || profilePicUrl,
+    };
+
+    await Users.findByIdAndUpdate(userId, { $set: updateFields }, { new: true });
+
+    // Step 6: Mark the professional account as verified
+    const professional = await Professional.findOne({ user: userId });
+    if (professional) {
+      professional.verified = true;
+      await professional.save();
+    }
+
+    return res.status(200).json(
+      new Apiresponse(
+        200,
+        { user, professional },
+        "LinkedIn account linked successfully"
+      )
+    );
+  } catch (error) {
+    console.error(
+      "LinkedIn OAuth error:",
+      error.response?.data || error.message
+    );
+    throw new Apierror(500, "Failed to link LinkedIn account");
+  }
+});
+
 export {
   updateInfo,
   registerStep4,
   registerStep5,
   Loginuser,
+  linkLinkedInAccount,
   uploadFile,
   LogoutUser,
   getCurrentUser,
@@ -1134,6 +1141,7 @@ export {
   resetPassword,
   registerStep1,
   registerStep2,
+  toggleProfessionalStatus,
   registerStep3,
   toggleActiveRole,
   getRegistrationState,

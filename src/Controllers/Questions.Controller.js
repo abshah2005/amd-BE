@@ -132,27 +132,29 @@ export const rejectQuestion = asynchandler(async (req, res) => {
   return res.status(200).json(new Apiresponse(200, q, "Question rejected"));
 });
 
-
 export const deleteQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
 
   const question = await Question.findById(id);
   if (!question) throw new Apierror(404, "Question not found");
 
-  // Ensure only the asker or admin can delete the question
   if (
     String(question.asker) !== String(req.user._id) &&
     req.user.role !== "admin"
   ) {
-    throw new Apierror(403, "You don't have permission to delete this question");
+    throw new Apierror(
+      403,
+      "You don't have permission to delete this question"
+    );
   }
 
-  // Delete the question
   await Question.findByIdAndDelete(id);
 
   return res
     .status(200)
-    .json(new Apiresponse(200, null, "Question deleted successfully"));
+    .json(
+      new Apiresponse(200, null, "Question marked as deleted successfully")
+    );
 });
 
 export const approveQuestion = asynchandler(async (req, res) => {

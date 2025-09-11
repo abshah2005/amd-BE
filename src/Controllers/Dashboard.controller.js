@@ -184,6 +184,8 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
           questionsAnswered: {
             $ifNull: [{ $arrayElemAt: ["$qAgg.answeredCount", 0] }, 0],
           },
+          featured: "$featured", 
+          verified: "$verified",
           status: { $cond: [{ $eq: ["$user.isActive", true] }, true, false] },
         },
       }

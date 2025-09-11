@@ -3,24 +3,9 @@ export const getCurrencyCodeFromSymbol = (symbol) => {
     "$": "usd",
     "€": "eur",
     "£": "gbp",
-    "¥": "jpy",
-    "₹": "inr",
-    "₩": "krw",
-    "₽": "rub",
-    "₺": "try",
-    "₪": "ils",
-    "₫": "vnd",
-    "₦": "ngn",
-    "฿": "thb",
-    "₵": "ghs",
-    "₴": "uah",
-    "₸": "kzt",
-    "₡": "crc",
-    "₱": "php",
-    "₭": "lak",
-    "₲": "pyg",
-    "₼": "azn",
-    "₺": "try",
+    "C$": "cad", // Canadian Dollar
+    "A$": "aud", // Australian Dollar
+    "Ft": "huf", // Hungarian Forint
   };
 
   return currencyMap[symbol] || "usd";
