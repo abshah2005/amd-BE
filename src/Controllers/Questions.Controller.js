@@ -8,6 +8,7 @@ import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
+import { getCurrencyCodeFromSymbol } from "../utils/CurrencyUtil.js";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const PLATFORM_FEE_PERCENT = parseFloat(
@@ -185,7 +186,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
   if (!normalAmount && !fastAmount)
     throw new Apierror(400, "At least one quote amount required");
 
-  const q = await Question.findById(id);
+  const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.professional) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
@@ -216,7 +217,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "approved_and_quoted",
     by: req.user._id,
-    note: `Quotes posted: normal $${normalAmount || "-"}, fast $${
+    note: `Quotes posted: normal ${q.professional.currency}${normalAmount || "-"}, fast ${q.professional.currency}${
       fastAmount || "-"
     }`,
   });
@@ -231,7 +232,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
 export const payQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { deliveryType } = req.body;
-  const q = await Question.findById(id);
+  const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
     throw new Apierror(403, "Not asker");
@@ -256,11 +257,16 @@ export const payQuestion = asynchandler(async (req, res) => {
   }
   q.price = price;
 
+  const professionalCurrencySymbol = q.professional.currency || "$"; 
+  console.log(professionalCurrencySymbol);// Default to USD if not set
+  const currency = getCurrencyCodeFromSymbol(professionalCurrencySymbol);
+
   const paymentIntent = await stripe.paymentIntents.create({
     amount: Math.round(price * 100),
-    currency: "usd",
+    currency: currency,
     metadata: { questionId: q._id.toString() },
   });
+
   q.payment = {
     paid: false,
     paymentProvider: "stripe",
@@ -507,7 +513,7 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
   if (q.professional.professionalStripeId) {
     await stripe.transfers.create({
       amount: Math.round(payoutAmount * 100),
-      currency: "usd",
+      currency: getCurrencyCodeFromSymbol(q.professional.currency),
       destination: q.professional.professionalStripeId,
       metadata: { questionId: q._id.toString() },
     });
