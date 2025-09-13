@@ -188,7 +188,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
 
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
-  if (String(q.professional) !== String(req.user.professional._id))
+  if (String(q.professional._id) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
 
   q.quote = {
@@ -260,6 +260,7 @@ export const payQuestion = asynchandler(async (req, res) => {
   const professionalCurrencySymbol = q.professional.currency || "$"; 
   console.log(professionalCurrencySymbol);// Default to USD if not set
   const currency = getCurrencyCodeFromSymbol(professionalCurrencySymbol);
+  console.log(currency);
 
   const paymentIntent = await stripe.paymentIntents.create({
     amount: Math.round(price * 100),
@@ -626,14 +627,18 @@ export const getQuestionById = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, question, "Question retrieved successfully"));
 });
 
+// ...existing code...
 export const listQuestions = asynchandler(async (req, res) => {
   const { status, page = 1, limit = 10 } = req.query;
   const filter = {};
 
-  if (req.user.activeRole === "professional" && req.user.professional) {
-    filter.professional = req.user.professional._id;
-  } else if (req.user.activeRole === "asker") {
-    filter.asker = req.user._id;
+  // Admin should see everything — do not add asker/professional filters for admin
+  if (req.user.role !== "admin") {
+    if (req.user.activeRole === "professional" && req.user.professional) {
+      filter.professional = req.user.professional._id;
+    } else if (req.user.activeRole === "asker") {
+      filter.asker = req.user._id;
+    }
   }
 
   if (status) {
@@ -678,3 +683,56 @@ export const listQuestions = asynchandler(async (req, res) => {
     )
   );
 });
+
+// export const listQuestions = asynchandler(async (req, res) => {
+//   const { status, page = 1, limit = 10 } = req.query;
+//   const filter = {};
+
+//   if (req.user.activeRole === "professional" && req.user.professional) {
+//     filter.professional = req.user.professional._id;
+//   } else if (req.user.activeRole === "asker") {
+//     filter.asker = req.user._id;
+//   }
+
+//   if (status) {
+//     // Accept comma-separated string or array
+//     const statusList = Array.isArray(status)
+//       ? status
+//       : typeof status === "string"
+//       ? status.split(",")
+//       : [status];
+//     filter.status = { $in: statusList };
+//   }
+
+//   const skip = (parseInt(page) - 1) * parseInt(limit);
+//   const total = await Question.countDocuments(filter);
+//   const questions = await Question.find(filter)
+//     .sort({ createdAt: -1 })
+//     .skip(skip)
+//     .limit(parseInt(limit))
+//     .populate({
+//       path: "professional",
+//       populate: {
+//         path: "user",
+//         select: "firstName lastName",
+//       },
+//     })
+//     .populate({
+//       path: "asker",
+//       select: "firstName lastName",
+//     });
+
+//   return res.status(200).json(
+//     new Apiresponse(
+//       200,
+//       {
+//         questions,
+//         total,
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         totalPages: Math.ceil(total / limit),
+//       },
+//       "Questions listed"
+//     )
+//   );
+// });
