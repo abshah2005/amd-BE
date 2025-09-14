@@ -351,22 +351,27 @@ export const stripeWebhook = asynchandler(async (req, res) => {
 
 export const postAnswer = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { body } = req.body;
+  const { text } = req.body;
+  console.log(text)
   let attachmentsList = [];
-  if (req.files?.attachments) {
-    attachmentsList = await handleAttachments(req.files.attachments);
-  }
+  
 
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.professional) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
 
+  if (req.files?.attachments) {
+    attachmentsList = await handleAttachments(req.files.attachments);
+    q.attachments = Array.isArray(q.attachments) ? q.attachments.concat(attachmentsList) : attachmentsList;
+  }
+  console.log(attachmentsList)
+
   if (q.status === "paid" || q.status === "awaiting_response") {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body,
+      text,
       attachments: attachmentsList,
       isFollowUp: false,
     });
@@ -383,16 +388,11 @@ export const postAnswer = asynchandler(async (req, res) => {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body,
+      text,
       attachments: attachmentsList,
       isFollowUp: true,
     });
-    // q.timeline.push({
-    //   at: new Date(),
-    //   status: "followup_answered",
-    //   by: req.user._id,
-    //   note: "Follow-up question answered.",
-    // });
+    
   } else {
     throw new Apierror(400, "Invalid status for posting an answer");
   }
