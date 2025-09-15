@@ -8,7 +8,9 @@ import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
-import { getCurrencyCodeFromSymbol } from "../utils/CurrencyUtil.js";
+import { getCurrencyCodeFromSymbol, getSymbolFromCurrencyCode } from "../utils/CurrencyUtil.js";
+
+import {fetchExchangeRates} from "../utils/ExchangeRateUtil.js"
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const PLATFORM_FEE_PERCENT = parseFloat(
@@ -217,9 +219,9 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "approved_and_quoted",
     by: req.user._id,
-    note: `Quotes posted: normal ${q.professional.currency}${normalAmount || "-"}, fast ${q.professional.currency}${
-      fastAmount || "-"
-    }`,
+    note: `Quotes posted: normal ${q.professional.currency}${
+      normalAmount || "-"
+    }, fast ${q.professional.currency}${fastAmount || "-"}`,
   });
 
   await q.save();
@@ -231,7 +233,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
 
 export const payQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { deliveryType } = req.body;
+  const { deliveryType, selectedCurrency = "usd" } = req.body;
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
@@ -243,35 +245,38 @@ export const payQuestion = asynchandler(async (req, res) => {
   )
     throw new Apierror(400, "Not approved or quoted yet");
 
-  let price = 0;
+  let priceUSD = 0;
   if (deliveryType === "fast" && q.quote.fast?.amount) {
-    price = q.quote.fast.amount;
+    priceUSD = q.quote.fast.amount;
     q.deliveryType = "fast";
     if (q.answerByFast) q.answerBy = q.answerByFast;
   } else if (deliveryType === "normal" && q.quote.normal?.amount) {
-    price = q.quote.normal.amount;
+    priceUSD = q.quote.normal.amount;
     q.deliveryType = "normal";
     if (q.answerByNormal) q.answerBy = q.answerByNormal;
   } else {
     throw new Apierror(400, "Invalid delivery type or quote not available");
   }
-  q.price = price;
+  // q.price = price;
+  q.priceUSD = priceUSD;
+  const exchangeRates = await fetchExchangeRates("USD");
 
-  const professionalCurrencySymbol = q.professional.currency || "$"; 
-  console.log(professionalCurrencySymbol);// Default to USD if not set
-  const currency = getCurrencyCodeFromSymbol(professionalCurrencySymbol);
-  console.log(currency);
+  const rate = exchangeRates[selectedCurrency.toUpperCase()] || 1;
+  const priceInSelectedCurrency = Math.round(priceUSD * rate * 100) / 100;
 
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(price * 100),
-    currency: currency,
-    metadata: { questionId: q._id.toString() },
+    amount: Math.round(priceInSelectedCurrency * 100),
+    currency: selectedCurrency.toLowerCase(),
+    metadata: { questionId: q._id.toString(), priceUSD: priceUSD.toString() },
   });
 
   q.payment = {
     paid: false,
     paymentProvider: "stripe",
     paymentReference: paymentIntent.id,
+    amountUSD: priceUSD,
+    paidCurrency: selectedCurrency,
+    paidAmount: priceInSelectedCurrency,
   };
   q.status = "awaiting_payment";
   q.timeline.push({
@@ -282,15 +287,36 @@ export const payQuestion = asynchandler(async (req, res) => {
   });
   await q.save();
   notifyStatusChange(q, "awaiting_payment").catch(() => {});
-  return res
-    .status(200)
-    .json(
-      new Apiresponse(
-        200,
-        { clientSecret: paymentIntent.client_secret },
-        "Payment initiated"
-      )
-    );
+  // return res
+  //   .status(200)
+  //   .json(
+  //     new Apiresponse(
+  //       200,
+  //       { clientSecret: paymentIntent.client_secret },
+  //       "Payment initiated"
+  //     )
+  //   );
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        clientSecret: paymentIntent.client_secret,
+        priceUSD,
+        availableCurrencies: Object.keys(exchangeRates)
+          .filter((code) =>
+            ["USD", "EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
+          )
+          .map((code) => ({
+            code: code.toLowerCase(),
+            rate: exchangeRates[code],
+            symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
+            convertedAmount:
+              Math.round(priceUSD * exchangeRates[code] * 100) / 100,
+          })),
+      },
+      "Payment initiated"
+    )
+  );
 });
 
 export const paidStatusQuestion = asynchandler(async (req, res) => {
@@ -352,9 +378,8 @@ export const stripeWebhook = asynchandler(async (req, res) => {
 export const postAnswer = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
-  console.log(body)
+  console.log(body);
   let attachmentsList = [];
-  
 
   const q = await Question.findById(id);
   if (!q) throw new Apierror(404, "Question not found");
@@ -363,15 +388,17 @@ export const postAnswer = asynchandler(async (req, res) => {
 
   if (req.files?.attachments) {
     attachmentsList = await handleAttachments(req.files.attachments);
-    q.attachments = Array.isArray(q.attachments) ? q.attachments.concat(attachmentsList) : attachmentsList;
+    q.attachments = Array.isArray(q.attachments)
+      ? q.attachments.concat(attachmentsList)
+      : attachmentsList;
   }
-  console.log(attachmentsList)
+  console.log(attachmentsList);
 
   if (q.status === "paid" || q.status === "awaiting_response") {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body:body,
+      body: body,
       attachments: attachmentsList,
       isFollowUp: false,
     });
@@ -388,11 +415,10 @@ export const postAnswer = asynchandler(async (req, res) => {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body:body,
+      body: body,
       attachments: attachmentsList,
       isFollowUp: true,
     });
-    
   } else {
     throw new Apierror(400, "Invalid status for posting an answer");
   }

@@ -34,8 +34,8 @@ const QuestionSchema = new mongoose.Schema(
     },
     price: { type: Number, default: 0 },
     proposedBudget: { type: Number, default: 0 },
-    feedback:{
-     type: mongoose.Schema.Types.ObjectId,
+    feedback: {
+      type: mongoose.Schema.Types.ObjectId,
       ref: "Feedback",
     },
     quote: {
@@ -61,11 +61,15 @@ const QuestionSchema = new mongoose.Schema(
     answerByFast: { type: Date },
     editorState: { type: String },
     attachments: [String],
+    priceUSD: { type: Number, default: 0 }, 
     payment: {
       paid: { type: Boolean, default: false },
       paymentProvider: String,
       paymentReference: String,
       paidAt: Date,
+      amountUSD: Number, // Standard price in USD
+      paidCurrency: String, // Currency code used for payment
+      paidAmount: Number,
     },
     status: {
       type: String,
