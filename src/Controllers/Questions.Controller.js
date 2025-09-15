@@ -661,6 +661,81 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 });
 
 // Professional closes thread (payout logic)
+// export const closeThreadAndPayout = asynchandler(async (req, res) => {
+//   const { id } = req.params;
+//   const { body } = req.body;
+//   console.log(body)
+//   const q = await Question.findById(id).populate("professional");
+//   if (!q) throw new Apierror(404, "Question not found");
+//   if (q.status === "closed") throw new Apierror(400, "Already closed");
+//   if (!q.payment.paid) throw new Apierror(400, "Not paid");
+//   if (String(q.professional._id) !== String(req.user.professional._id))
+//     throw new Apierror(403, "Not professional");
+
+//   const now = new Date();
+//   let totalFeePercent = PLATFORM_FEE_PERCENT;
+//   let penalty = false;
+//   if (now < q.thread.followUpWindowExpiresAt) {
+//     totalFeePercent += EARLY_CLOSE_PENALTY_PERCENT;
+//     q.thread.threadClosedEarlier = true;
+//     penalty = true;
+//   }
+//   const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
+//   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
+//   q.status = "closed";
+//   q.thread.closedAt = now;
+//   q.thread.messages.push({
+//       sender: req.user._id,
+//       role: "professional",
+//       body: body,
+//       attachments:[],
+//       isFollowUp: false,
+//   });
+//   q.timeline.push({
+//     at: new Date(),
+//     status: "closed",
+//     by: req.user._id,
+//     note: "Thread closed by professional. " + (body ? `Note: ${body}` : ""),
+//   });
+
+//   await q.save();
+
+//   if (q.professional.professionalStripeId) {
+//     await stripe.transfers.create({
+//       amount: Math.round(payoutAmount * 100),
+//       currency: "usd",
+//       destination: q.professional.professionalStripeId,
+//       metadata: { questionId: q._id.toString() },
+//     });
+//     console.log(
+//       `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
+//     );
+//   }else{
+//     await Professional.findByIdAndUpdate(q.professional._id, {
+//       $push: {
+//         pendingPayouts: {
+//           amount: payoutAmount,
+//           questionId: q._id,
+//           timestamp: new Date(),
+//           paid: false
+//         }
+//       }
+//     });
+//   }
+//   notifyStatusChange(q, "closed", body).catch(() => {});
+//   return res
+//     .status(200)
+//     .json(
+//       new Apiresponse(
+//         200,
+//         q,
+//         penalty
+//           ? "Thread closed early, payout deducted"
+//           : "Thread closed and payout sent"
+//       )
+//     );
+// });
+
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
@@ -682,15 +757,17 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
   }
   const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
+
+  // update thread/messages/timeline prior to payout attempt
   q.status = "closed";
   q.thread.closedAt = now;
-  q.thread.messages.push({
-      sender: req.user._id,
-      role: "professional",
-      body: body,
-      attachments:[],
-      isFollowUp: false,
-  });
+  // q.thread.messages.push({
+  //   sender: req.user._id,
+  //   role: "professional",
+  //   body: body,
+  //   attachments: [],
+  //   isFollowUp: false,
+  // });
   q.timeline.push({
     at: new Date(),
     status: "closed",
@@ -700,28 +777,92 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
 
   await q.save();
 
+  // Attempt payout if stripe account exists; otherwise store pending payout.
   if (q.professional.professionalStripeId) {
-    await stripe.transfers.create({
-      amount: Math.round(payoutAmount * 100),
-      currency: "usd",
-      destination: q.professional.professionalStripeId,
-      metadata: { questionId: q._id.toString() },
-    });
-    console.log(
-      `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
-    );
-  }else{
+    try {
+      // retrieve account and check payouts/capabilities before attempting transfer
+      const account = await stripe.accounts.retrieve(
+        q.professional.professionalStripeId
+      );
+
+      const payoutsEnabled = !!account.payouts_enabled;
+      const transfersActive = account.capabilities?.transfers === "active";
+
+      if (payoutsEnabled && transfersActive) {
+        try {
+          await stripe.transfers.create({
+            amount: Math.round(payoutAmount * 100),
+            currency: "usd",
+            destination: q.professional.professionalStripeId,
+            metadata: { questionId: q._id.toString() },
+          });
+          console.log(
+            `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
+          );
+        } catch (txErr) {
+          // transfer failed -> fallback to pendingPayouts
+          console.error(
+            `Stripe transfer failed for question ${q._id}, saving to pendingPayouts:`,
+            txErr
+          );
+          await Professional.findByIdAndUpdate(q.professional._id, {
+            $push: {
+              pendingPayouts: {
+                amount: payoutAmount,
+                questionId: q._id,
+                timestamp: new Date(),
+                paid: false,
+              },
+            },
+          });
+        }
+      } else {
+        // account not ready for payouts -> store pending payout instead of throwing
+        console.log(
+          `Stripe account ${q.professional.professionalStripeId} not ready (payoutsEnabled=${payoutsEnabled}, transfersActive=${transfersActive}). Saving payout to pendingPayouts.`
+        );
+        await Professional.findByIdAndUpdate(q.professional._id, {
+          $push: {
+            pendingPayouts: {
+              amount: payoutAmount,
+              questionId: q._id,
+              timestamp: new Date(),
+              paid: false,
+            },
+          },
+        });
+      }
+    } catch (accErr) {
+      // failed to retrieve account or other stripe error -> fallback to pendingPayouts
+      console.error(
+        `Error checking Stripe account for professional ${q.professional._id}. Saving payout to pendingPayouts.`,
+        accErr
+      );
+      await Professional.findByIdAndUpdate(q.professional._id, {
+        $push: {
+          pendingPayouts: {
+            amount: payoutAmount,
+            questionId: q._id,
+            timestamp: new Date(),
+            paid: false,
+          },
+        },
+      });
+    }
+  } else {
+    // no stripe id -> store pending payout
     await Professional.findByIdAndUpdate(q.professional._id, {
       $push: {
         pendingPayouts: {
           amount: payoutAmount,
           questionId: q._id,
           timestamp: new Date(),
-          paid: false
-        }
-      }
+          paid: false,
+        },
+      },
     });
   }
+
   notifyStatusChange(q, "closed", body).catch(() => {});
   return res
     .status(200)
