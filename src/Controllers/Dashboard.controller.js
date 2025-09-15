@@ -4,11 +4,17 @@ import { Users } from "../models/Users.model.js";
 import { Professional } from "../models/Professional.model.js";
 import { Asker } from "../models/Asker.model.js";
 import { Question } from "../models/Question.model.js";
+import Stripe from "stripe";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const getDashboardStats = asynchandler(async (req, res) => {
   const totalUsers = await Users.countDocuments({ isAdmin: false });
 
-  const activeUsers = await Users.countDocuments({ isActive: true,isAdmin:false });
+  const activeUsers = await Users.countDocuments({
+    isActive: true,
+    isAdmin: false,
+  });
 
   const earningsAgg = await Question.aggregate([
     { $match: { "payment.paid": true } },
@@ -44,8 +50,12 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   const professionalId = req.user.professional?._id;
   if (!professionalId) throw new Apierror(403, "Not a professional");
 
-  const PLATFORM_FEE_PERCENT = parseFloat(process.env.PLATFORM_FEE_PERCENT || "12");
-  const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(process.env.EARLY_CLOSE_PENALTY_PERCENT || "3");
+  const PLATFORM_FEE_PERCENT = parseFloat(
+    process.env.PLATFORM_FEE_PERCENT || "12"
+  );
+  const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
+    process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
+  );
 
   const activeQuestions = await Question.countDocuments({
     professional: professionalId,
@@ -105,10 +115,40 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   const netReceived = Math.round((netAgg[0]?.netTotal || 0) * 100) / 100;
 
   const prof = await Professional.findById(professionalId);
-  const pendingPayouts=prof?.pendingPayouts || [];
+  const pendingPayouts = (prof?.pendingPayouts || []).filter((p) => !p.paid);
   const normalize = (s) => String(s || "").replace(/\s+/g, "");
   await prof.populate("user", "firstName lastName");
   const avgRating = prof?.rating || 0;
+  
+  let payoutsEnabled = false;
+  let transfersActive = false;
+  let stripeAccountInfo = { accountId: null };
+
+  if (prof?.professionalStripeId) {
+    try {
+      const account = await stripe.accounts.retrieve(prof.professionalStripeId);
+      payoutsEnabled = !!account.payouts_enabled;
+      transfersActive = account.capabilities?.transfers === "active";
+      stripeAccountInfo = {
+        accountId: prof.professionalStripeId,
+        requirements: account.requirements || {},
+      };
+    } catch (err) {
+      // log and treat as not ready for payouts
+      console.error(
+        `Failed to retrieve Stripe account for professional ${prof._id}:`,
+        err
+      );
+      payoutsEnabled = false;
+      transfersActive = false;
+      stripeAccountInfo = { accountId: prof.professionalStripeId, error: err.message || "retrieve_failed" };
+    }
+  } else {
+    // professional has no stripe id — explicitly mark as not allowed
+    payoutsEnabled = false;
+    transfersActive = false;
+    stripeAccountInfo = { accountId: null };
+  }
 
   res.status(200).json(
     new Apiresponse(
@@ -118,8 +158,12 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
         questionsCompleted,
         avgRating,
         pendingPayouts,
-        totalEarnings:netReceived,
-        shareUrl:  `${process.env.FRONTEND_URL}/profile/${normalize(
+        professionalActivationStatus: {
+          professionalId: prof._id,
+          isAllowedPayout: payoutsEnabled && transfersActive,
+        },
+        totalEarnings: netReceived,
+        shareUrl: `${process.env.FRONTEND_URL}/profile/${normalize(
           prof.user.firstName
         )}_${normalize(prof.user.lastName)}`,
       },
@@ -161,9 +205,12 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       },
     },
     { $unwind: "$user" },
-    { $match: { "user.roles": type, 
-      // "user.activeRole": type
-     } },
+    {
+      $match: {
+        "user.roles": type,
+        // "user.activeRole": type
+      },
+    },
     { $sort: { "user.createdAt": -1 } },
     { $skip: skip },
     { $limit: lim },
@@ -230,7 +277,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
           questionsAnswered: {
             $ifNull: [{ $arrayElemAt: ["$qAgg.answeredCount", 0] }, 0],
           },
-          featured: "$featured", 
+          featured: "$featured",
           verified: "$verified",
           status: { $cond: [{ $eq: ["$user.isActive", true] }, true, false] },
         },

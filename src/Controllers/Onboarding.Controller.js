@@ -42,6 +42,7 @@ export const getOnboardingStatus = async (req, res) => {
   }
 };
 
+
 export const processBacklogPayments = asynchandler(async (req, res) => {
   const { professionalId } = req.params;
 
@@ -50,49 +51,76 @@ export const processBacklogPayments = asynchandler(async (req, res) => {
     throw new Apierror(400, "Professional not onboarded to Stripe");
   }
 
-  // Check if the Stripe account is fully enabled for payouts and transfers
+  // retrieve stripe account and decide whether to process or leave payouts pending
+  let account;
   try {
-    const account = await stripe.accounts.retrieve(professional.professionalStripeId);
-    
-    if (!account.payouts_enabled || !account.capabilities?.transfers === 'active') {
-      throw new Apierror(400, "Professional's Stripe account is not fully enabled for payouts. Requirements needed: " + 
-        (account.requirements?.currently_due?.length > 0 ? account.requirements.currently_due.join(', ') : "None"));
-    }
-    
+    account = await stripe.accounts.retrieve(professional.professionalStripeId);
   } catch (err) {
-    console.error(`Failed to retrieve Stripe account for professional ${professionalId}:`, err);
+    console.error(
+      `Failed to retrieve Stripe account for professional ${professionalId}:`,
+      err
+    );
     throw new Apierror(500, "Failed to verify Stripe account status");
   }
 
+  const payoutsEnabled = !!account.payouts_enabled;
+  const transfersActive = account.capabilities?.transfers === "active";
+
+  // If account is not ready, return status and leave pending payouts as-is
+  if (!payoutsEnabled || !transfersActive) {
+    return res.status(200).json(
+      new Apiresponse(
+        200,
+        {
+          processed: [],
+          failed: [],
+          pendingCount: (professional.pendingPayouts || []).filter(p => !p.paid).length,
+          pendingTotal: (professional.pendingPayouts || [])
+            .filter(p => !p.paid)
+            .reduce((s, p) => s + (p.amount || 0), 0),
+          stripeAccountStatus: {
+            ready: false,
+            accountId: professional.professionalStripeId,
+            requirements: account.requirements || {},
+          },
+        },
+        "Stripe account not ready for payouts — pending payouts retained"
+      )
+    );
+  }
+
+  // Account ready -> attempt to process pending payouts
   const pendingPayouts = professional.pendingPayouts || [];
   const processedPayouts = [];
   const failedPayouts = [];
 
   for (const payout of pendingPayouts.filter((p) => !p.paid)) {
     try {
-      await stripe.transfers.create({
+      const transfer = await stripe.transfers.create({
         amount: Math.round(payout.amount * 100),
         currency: "usd",
         destination: professional.professionalStripeId,
-        metadata: { 
-          questionId: payout.questionId.toString(),
-          processingDate: new Date().toISOString()
+        metadata: {
+          questionId: payout.questionId?.toString?.(),
+          processingDate: new Date().toISOString(),
         },
       });
 
-      // Mark as paid
+      // Mark as paid with metadata for audit
       payout.paid = true;
-      payout.timestamp = new Date();
+      payout.paidAt = new Date();
+      payout.stripeTransferId = transfer.id;
       processedPayouts.push(payout);
     } catch (err) {
       console.error(
         `Failed to process payout for question ${payout.questionId}:`,
         err
       );
-      failedPayouts.push({ 
-        ...payout.toObject(), 
+      // record failure details but keep unpaid so it can be retried later
+      failedPayouts.push({
+        ...payout.toObject?.() || payout,
         error: err.message,
-        attemptedAt: new Date() 
+        attemptedAt: new Date(),
       });
     }
   }
@@ -107,14 +135,98 @@ export const processBacklogPayments = asynchandler(async (req, res) => {
         failed: failedPayouts,
         stripeAccountStatus: {
           ready: true,
-          accountId: professional.professionalStripeId
-        }
+          accountId: professional.professionalStripeId,
+        },
       },
-      "Backlog payments processed"
+      "Backlog payments processed (or retained if account not ready)"
     )
   );
 });
 
+// export const processBacklogPayments = asynchandler(async (req, res) => {
+//   const { professionalId } = req.params;
+
+//   const professional = await Professional.findById(professionalId);
+//   if (!professional || !professional.professionalStripeId) {
+//     throw new Apierror(400, "Professional not onboarded to Stripe");
+//   }
+
+//   // Check if the Stripe account is fully enabled for payouts and transfers
+//   try {
+//     const account = await stripe.accounts.retrieve(
+//       professional.professionalStripeId
+//     );
+
+//     if (
+//       !account.payouts_enabled ||
+//       account.capabilities?.transfers !== "active"
+//     ) {
+//       throw new Apierror(
+//         400,
+//         "Professional's Stripe account is not fully enabled for payouts. Requirements needed: " +
+//           (account.requirements?.currently_due?.length > 0
+//             ? account.requirements.currently_due.join(", ")
+//             : "None")
+//       );
+//     }
+//   } catch (err) {
+//     console.error(
+//       `Failed to retrieve Stripe account for professional ${professionalId}:`,
+//       err
+//     );
+//     throw new Apierror(500, "Failed to verify Stripe account status");
+//   }
+
+//   const pendingPayouts = professional.pendingPayouts || [];
+//   const processedPayouts = [];
+//   const failedPayouts = [];
+
+//   for (const payout of pendingPayouts.filter((p) => !p.paid)) {
+//     try {
+//       await stripe.transfers.create({
+//         amount: Math.round(payout.amount * 100),
+//         currency: "usd",
+//         destination: professional.professionalStripeId,
+//         metadata: {
+//           questionId: payout.questionId.toString(),
+//           processingDate: new Date().toISOString(),
+//         },
+//       });
+
+//       // Mark as paid
+//       payout.paid = true;
+//       payout.timestamp = new Date();
+//       processedPayouts.push(payout);
+//     } catch (err) {
+//       console.error(
+//         `Failed to process payout for question ${payout.questionId}:`,
+//         err
+//       );
+//       failedPayouts.push({
+//         ...payout.toObject(),
+//         error: err.message,
+//         attemptedAt: new Date(),
+//       });
+//     }
+//   }
+
+//   await professional.save();
+
+//   return res.status(200).json(
+//     new Apiresponse(
+//       200,
+//       {
+//         processed: processedPayouts,
+//         failed: failedPayouts,
+//         stripeAccountStatus: {
+//           ready: true,
+//           accountId: professional.professionalStripeId,
+//         },
+//       },
+//       "Backlog payments processed"
+//     )
+//   );
+// });
 
 export const onboardProfessionalToStripe = async (req, res) => {
   try {
@@ -147,10 +259,10 @@ export const onboardProfessionalToStripe = async (req, res) => {
     });
 
     // if (professional.pendingPayouts && professional.pendingPayouts.length > 0) {
-    //   await processBacklogPayments({ params: { professionalId } }, { 
-    //     status: () => ({ json: () => {} }) 
+    //   await processBacklogPayments({ params: { professionalId } }, {
+    //     status: () => ({ json: () => {} })
     //   });
-      
+
     //   console.log(`Processed ${professional.pendingPayouts.length} pending payouts for professional ${professionalId}`);
     // }
 
