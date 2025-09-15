@@ -664,6 +664,7 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
+  console.log(body)
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (q.status === "closed") throw new Apierror(400, "Already closed");
@@ -683,6 +684,13 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
   q.status = "closed";
   q.thread.closedAt = now;
+  q.thread.messages.push({
+      sender: req.user._id,
+      role: "professional",
+      body: body,
+      attachments:[],
+      isFollowUp: false,
+  });
   q.timeline.push({
     at: new Date(),
     status: "closed",
@@ -702,6 +710,17 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     console.log(
       `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
     );
+  }else{
+    await Professional.findByIdAndUpdate(q.professional._id, {
+      $push: {
+        pendingPayouts: {
+          amount: payoutAmount,
+          questionId: q._id,
+          timestamp: new Date(),
+          paid: false
+        }
+      }
+    });
   }
   notifyStatusChange(q, "closed", body).catch(() => {});
   return res

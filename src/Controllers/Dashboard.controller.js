@@ -44,6 +44,9 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   const professionalId = req.user.professional?._id;
   if (!professionalId) throw new Apierror(403, "Not a professional");
 
+  const PLATFORM_FEE_PERCENT = parseFloat(process.env.PLATFORM_FEE_PERCENT || "12");
+  const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(process.env.EARLY_CLOSE_PENALTY_PERCENT || "3");
+
   const activeQuestions = await Question.countDocuments({
     professional: professionalId,
     status: { $nin: ["closed", "rejected"] },
@@ -54,13 +57,55 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
     status: "closed",
   });
 
-  const earningsAgg = await Question.aggregate([
-    { $match: { professional: professionalId, "payment.paid": true } },
-    { $group: { _id: null, total: { $sum: "$price" } } },
-  ]);
-  const totalEarnings = earningsAgg[0]?.total || 0;
+  // const earningsAgg = await Question.aggregate([
+  //   { $match: { professional: professionalId, "payment.paid": true } },
+  //   { $group: { _id: null, total: { $sum: "$price" } } },
+  // ]);
+  // const totalEarnings = earningsAgg[0]?.total || 0;
+
+  const netAgg = await Question.aggregate([
+    {
+      $match: {
+        professional: professionalId,
+        "payment.paid": true,
+        status: "closed",
+      },
+    },
+    {
+      $project: {
+        price: { $ifNull: ["$price", 0] },
+        threadClosedEarlier: "$thread.threadClosedEarlier",
+      },
+    },
+    {
+      $addFields: {
+        feePercent: {
+          $cond: [
+            "$threadClosedEarlier",
+            PLATFORM_FEE_PERCENT + EARLY_CLOSE_PENALTY_PERCENT,
+            PLATFORM_FEE_PERCENT,
+          ],
+        },
+      },
+    },
+    {
+      $project: {
+        net: {
+          $multiply: [
+            "$price",
+            { $subtract: [1, { $divide: ["$feePercent", 100] }] },
+          ],
+        },
+      },
+    },
+    {
+      $group: { _id: null, netTotal: { $sum: "$net" } },
+    },
+  ]).allowDiskUse(true);
+  const netReceived = Math.round((netAgg[0]?.netTotal || 0) * 100) / 100;
 
   const prof = await Professional.findById(professionalId);
+  const pendingPayouts=prof?.pendingPayouts || [];
   const normalize = (s) => String(s || "").replace(/\s+/g, "");
   await prof.populate("user", "firstName lastName");
   const avgRating = prof?.rating || 0;
@@ -72,7 +117,8 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
         activeQuestions,
         questionsCompleted,
         avgRating,
-        totalEarnings,
+        pendingPayouts,
+        totalEarnings:netReceived,
         shareUrl:  `${process.env.FRONTEND_URL}/profile/${normalize(
           prof.user.firstName
         )}_${normalize(prof.user.lastName)}`,
