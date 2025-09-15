@@ -14,7 +14,8 @@ import {
   getQuestionById,
   approveQuestion,
   paidStatusQuestion,
-  deleteQuestion
+  deleteQuestion,
+  getPaymentOptions
 } from "../Controllers/Questions.Controller.js";
 import { verifyJWT,trackActive } from "../middlewares/Authentication.middleware.js";
 import { upload } from "../middlewares/Multer.middleware.js";
@@ -26,7 +27,7 @@ router.post("/:id/approve",verifyJWT,trackActive,approveQuestion);
 router.post("/:id/quote", verifyJWT, trackActive,approveAndQuoteQuestion);
 router.post("/:id/reject", verifyJWT, trackActive,rejectQuestion);
 router.post("/:id/pay", verifyJWT, trackActive,payQuestion);
-router.post("/:id/payment-options", authMiddleware, getPaymentOptions);
+router.post("/:id/payment-options",verifyJWT,getPaymentOptions );
 router.post("/:id/paid", paidStatusQuestion);
 
 router.post("/stripe/webhook", stripeWebhook);

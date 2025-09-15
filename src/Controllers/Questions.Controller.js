@@ -231,9 +231,10 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, q, "Quotes posted for both delivery types"));
 });
 
-export const payQuestion = asynchandler(async (req, res) => {
+export const getPaymentOptions = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { deliveryType, selectedCurrency = "usd" } = req.body;
+  const { deliveryType } = req.body;
+  
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
@@ -245,6 +246,67 @@ export const payQuestion = asynchandler(async (req, res) => {
   )
     throw new Apierror(400, "Not approved or quoted yet");
 
+  // Get USD price based on delivery type
+  let priceUSD = 0;
+  if (deliveryType === "fast" && q.quote.fast?.amount) {
+    priceUSD = q.quote.fast.amount;
+  } else if (deliveryType === "normal" && q.quote.normal?.amount) {
+    priceUSD = q.quote.normal.amount;
+  } else {
+    throw new Apierror(400, "Invalid delivery type or quote not available");
+  }
+  
+  // Get exchange rates for currency options
+  const exchangeRates = await fetchExchangeRates("USD");
+  
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        priceUSD,
+        deliveryType,
+        availableCurrencies: [
+          {
+            code: "usd",
+            rate: 1,
+            symbol: "$",
+            convertedAmount: priceUSD
+          },
+          ...Object.keys(exchangeRates)
+            .filter((code) =>
+              ["EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
+            )
+            .map((code) => ({
+              code: code.toLowerCase(),
+              rate: exchangeRates[code],
+              symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
+              convertedAmount:
+                Math.round(priceUSD * exchangeRates[code] * 100) / 100,
+            }))
+        ]
+      },
+      "Payment options retrieved"
+    )
+  );
+});
+
+
+export const payQuestion = asynchandler(async (req, res) => {
+  const { id } = req.params;
+  const { deliveryType, selectedCurrency = "usd" } = req.body;
+  
+  const q = await Question.findById(id).populate("professional");
+  if (!q) throw new Apierror(404, "Question not found");
+  if (String(q.asker) !== String(req.user._id))
+    throw new Apierror(403, "Not asker");
+  if (
+    q.status !== "approved" &&
+    q.status !== "quoted" &&
+    q.status !== "awaiting_payment"
+  )
+    throw new Apierror(400, "Not approved or quoted yet");
+
+  // Get USD price based on delivery type
   let priceUSD = 0;
   if (deliveryType === "fast" && q.quote.fast?.amount) {
     priceUSD = q.quote.fast.amount;
@@ -257,20 +319,24 @@ export const payQuestion = asynchandler(async (req, res) => {
   } else {
     throw new Apierror(400, "Invalid delivery type or quote not available");
   }
-  // q.price = price;
+  
+  // Set question price information
   q.priceUSD = priceUSD;
-  q.price=priceUSD;
+  q.price = priceUSD;
+  
+  // Get exchange rate for selected currency
   const exchangeRates = await fetchExchangeRates("USD");
-
   const rate = exchangeRates[selectedCurrency.toUpperCase()] || 1;
   const priceInSelectedCurrency = Math.round(priceUSD * rate * 100) / 100;
 
+  // Create payment intent
   const paymentIntent = await stripe.paymentIntents.create({
     amount: Math.round(priceInSelectedCurrency * 100),
     currency: selectedCurrency.toLowerCase(),
     metadata: { questionId: q._id.toString(), priceUSD: priceUSD.toString() },
   });
 
+  // Update question with payment details
   q.payment = {
     paid: false,
     paymentProvider: "stripe",
@@ -280,6 +346,8 @@ export const payQuestion = asynchandler(async (req, res) => {
     paidAmount: priceInSelectedCurrency,
   };
   q.status = "awaiting_payment";
+  
+  // Add timeline entry if not already present
   const hasPaymentAwaitingEntry = q.timeline.some(
     entry => entry.status === "payment_awaiting"
   );
@@ -293,40 +361,118 @@ export const payQuestion = asynchandler(async (req, res) => {
   }
   
   await q.save();
+  
+  // Send notification if needed
   if(!hasPaymentAwaitingEntry){
     notifyStatusChange(q, "awaiting_payment").catch(() => {});
   }
+  
   return res.status(200).json(
     new Apiresponse(
       200,
-      {
-        clientSecret: paymentIntent.client_secret,
-        priceUSD,
-        availableCurrencies:
-        [
-          {
-          code: "usd",
-          rate: 1, // Base rate
-          symbol: "$",
-          convertedAmount: priceUSD
-        },
-        ...Object.keys(exchangeRates)
-          .filter((code) =>
-            ["EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
-          )
-          .map((code) => ({
-            code: code.toLowerCase(),
-            rate: exchangeRates[code],
-            symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
-            convertedAmount:
-              Math.round(priceUSD * exchangeRates[code] * 100) / 100,
-          }))
-        ] 
-      },
+      { clientSecret: paymentIntent.client_secret },
       "Payment initiated"
     )
   );
 });
+
+
+// export const payQuestion = asynchandler(async (req, res) => {
+//   const { id } = req.params;
+//   const { deliveryType, selectedCurrency = "usd" } = req.body;
+//   const q = await Question.findById(id).populate("professional");
+//   if (!q) throw new Apierror(404, "Question not found");
+//   if (String(q.asker) !== String(req.user._id))
+//     throw new Apierror(403, "Not asker");
+//   if (
+//     q.status !== "approved" &&
+//     q.status !== "quoted" &&
+//     q.status !== "awaiting_payment"
+//   )
+//     throw new Apierror(400, "Not approved or quoted yet");
+
+//   let priceUSD = 0;
+//   if (deliveryType === "fast" && q.quote.fast?.amount) {
+//     priceUSD = q.quote.fast.amount;
+//     q.deliveryType = "fast";
+//     if (q.answerByFast) q.answerBy = q.answerByFast;
+//   } else if (deliveryType === "normal" && q.quote.normal?.amount) {
+//     priceUSD = q.quote.normal.amount;
+//     q.deliveryType = "normal";
+//     if (q.answerByNormal) q.answerBy = q.answerByNormal;
+//   } else {
+//     throw new Apierror(400, "Invalid delivery type or quote not available");
+//   }
+//   // q.price = price;
+//   q.priceUSD = priceUSD;
+//   q.price=priceUSD;
+//   const exchangeRates = await fetchExchangeRates("USD");
+
+//   const rate = exchangeRates[selectedCurrency.toUpperCase()] || 1;
+//   const priceInSelectedCurrency = Math.round(priceUSD * rate * 100) / 100;
+
+//   const paymentIntent = await stripe.paymentIntents.create({
+//     amount: Math.round(priceInSelectedCurrency * 100),
+//     currency: selectedCurrency.toLowerCase(),
+//     metadata: { questionId: q._id.toString(), priceUSD: priceUSD.toString() },
+//   });
+
+//   q.payment = {
+//     paid: false,
+//     paymentProvider: "stripe",
+//     paymentReference: paymentIntent.id,
+//     amountUSD: priceUSD,
+//     paidCurrency: selectedCurrency,
+//     paidAmount: priceInSelectedCurrency,
+//   };
+//   q.status = "awaiting_payment";
+//   const hasPaymentAwaitingEntry = q.timeline.some(
+//     entry => entry.status === "payment_awaiting"
+//   );
+//   if (!hasPaymentAwaitingEntry) {
+//     q.timeline.push({
+//       at: new Date(),
+//       status: "payment_awaiting",
+//       by: req.user._id,
+//       note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
+//     });
+//   }
+  
+//   await q.save();
+//   if(!hasPaymentAwaitingEntry){
+//     notifyStatusChange(q, "awaiting_payment").catch(() => {});
+//   }
+//   return res.status(200).json(
+//     new Apiresponse(
+//       200,
+//       {
+//         clientSecret: paymentIntent.client_secret,
+//         priceUSD,
+//         availableCurrencies:
+//         [
+//           {
+//           code: "usd",
+//           rate: 1, // Base rate
+//           symbol: "$",
+//           convertedAmount: priceUSD
+//         },
+//         ...Object.keys(exchangeRates)
+//           .filter((code) =>
+//             ["EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
+//           )
+//           .map((code) => ({
+//             code: code.toLowerCase(),
+//             rate: exchangeRates[code],
+//             symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
+//             convertedAmount:
+//               Math.round(priceUSD * exchangeRates[code] * 100) / 100,
+//           }))
+//         ] 
+//       },
+//       "Payment initiated"
+//     )
+//   );
+// });
 
 export const paidStatusQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
