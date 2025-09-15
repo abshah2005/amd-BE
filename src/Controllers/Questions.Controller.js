@@ -351,8 +351,8 @@ export const stripeWebhook = asynchandler(async (req, res) => {
 
 export const postAnswer = asynchandler(async (req, res) => {
   const { id } = req.params;
-  const { text } = req.body;
-  console.log(text)
+  const { body } = req.body;
+  console.log(body)
   let attachmentsList = [];
   
 
@@ -371,7 +371,7 @@ export const postAnswer = asynchandler(async (req, res) => {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      text,
+      body:body,
       attachments: attachmentsList,
       isFollowUp: false,
     });
@@ -388,7 +388,7 @@ export const postAnswer = asynchandler(async (req, res) => {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      text,
+      body:body,
       attachments: attachmentsList,
       isFollowUp: true,
     });

@@ -94,7 +94,7 @@ const UserSchema = new Schema(
 
     activeRole: {
       type: String,
-      enum: ["asker", "professional","admin"],
+      enum: ["asker", "professional", "admin"],
       default: null,
       index: true,
     },
@@ -136,6 +136,12 @@ const UserSchema = new Schema(
       select: false,
     },
 
+    isAskerDeleted: { type: Boolean, default: false },
+    isProDeleted: { type: Boolean, default: false },
+    deletionScheduledAt: { type: Date },
+    // For GDPR compliance
+    anonymizedAt: { type: Date },
+
     linkedinId: {
       type: String,
       unique: true,
@@ -145,7 +151,7 @@ const UserSchema = new Schema(
       type: String,
     },
     paymentMethods: [
-      { type: mongoose.Schema.Types.ObjectId, ref: 'PaymentMethod' }
+      { type: mongoose.Schema.Types.ObjectId, ref: "PaymentMethod" },
     ],
   },
   {
@@ -228,7 +234,7 @@ UserSchema.methods.addRole = async function (role, opts = {}) {
   role = String(role);
   if (!["admin", "asker", "professional"].includes(role))
     throw new Error("Invalid role");
-  if (this.roles.includes(role)) return this; 
+  if (this.roles.includes(role)) return this;
 
   let session = opts.session || null;
   let createdSession = false;
@@ -288,7 +294,6 @@ UserSchema.methods.addRole = async function (role, opts = {}) {
     }
 
     this.roles.push(role);
-
 
     await this.save({ session: session || undefined });
 
@@ -355,7 +360,7 @@ UserSchema.methods.switchToAdmin = async function () {
 };
 
 UserSchema.methods.getPaymentMethods = async function (opts = {}) {
-  const PaymentMethod = mongoose.model('PaymentMethod');
+  const PaymentMethod = mongoose.model("PaymentMethod");
   const methods = await PaymentMethod.find({ user: this._id }).lean();
   const sanitized = methods.map((m) => {
     const obj = JSON.parse(JSON.stringify(m));
@@ -368,29 +373,38 @@ UserSchema.methods.getPaymentMethods = async function (opts = {}) {
     }
     return obj;
   });
-  return sanitized.sort((a, b) => (a.isDefault === b.isDefault ? (new Date(b.createdAt) - new Date(a.createdAt)) : (a.isDefault ? -1 : 1)));
+  return sanitized.sort((a, b) =>
+    a.isDefault === b.isDefault
+      ? new Date(b.createdAt) - new Date(a.createdAt)
+      : a.isDefault
+      ? -1
+      : 1
+  );
 };
 
 UserSchema.methods.addPaymentMethod = async function (paymentData = {}) {
-  const PaymentMethod = mongoose.model('PaymentMethod');
+  const PaymentMethod = mongoose.model("PaymentMethod");
   // if new method should be default, clear existing defaults
   if (paymentData.isDefault) {
-    await PaymentMethod.updateMany({ user: this._id }, { $set: { isDefault: false } });
+    await PaymentMethod.updateMany(
+      { user: this._id },
+      { $set: { isDefault: false } }
+    );
   }
 
   // create the payment method document
   const pm = await PaymentMethod.create({
     user: this._id,
-    provider: paymentData.provider || 'card',
+    provider: paymentData.provider || "card",
     providerToken: paymentData.providerToken,
     providerCustomerId: paymentData.providerCustomerId,
-    type: paymentData.type || 'card',
+    type: paymentData.type || "card",
     card: paymentData.card || {},
     rawCard: paymentData.rawCard || {},
     billingDetails: paymentData.billingDetails || {},
     isDefault: !!paymentData.isDefault,
     verified: !!paymentData.verified,
-    metadata: paymentData.metadata || {}
+    metadata: paymentData.metadata || {},
   });
 
   // ensure user holds a reference
@@ -399,7 +413,10 @@ UserSchema.methods.addPaymentMethod = async function (paymentData = {}) {
 
   // if not explicitly set default and no default exists, make this default
   if (!paymentData.isDefault) {
-    const existingDefault = await PaymentMethod.findOne({ user: this._id, isDefault: true });
+    const existingDefault = await PaymentMethod.findOne({
+      user: this._id,
+      isDefault: true,
+    });
     if (!existingDefault) {
       pm.isDefault = true;
       await pm.save();
@@ -409,41 +426,66 @@ UserSchema.methods.addPaymentMethod = async function (paymentData = {}) {
   await this.save();
 
   const obj = pm.toObject ? pm.toObject() : JSON.parse(JSON.stringify(pm));
-  delete obj.providerToken; delete obj.providerCustomerId; if (obj.rawCard) { delete obj.rawCard.number; delete obj.rawCard.cvc; delete obj.rawCard.expiryMMYY; }
+  delete obj.providerToken;
+  delete obj.providerCustomerId;
+  if (obj.rawCard) {
+    delete obj.rawCard.number;
+    delete obj.rawCard.cvc;
+    delete obj.rawCard.expiryMMYY;
+  }
   return obj;
 };
 
 UserSchema.methods.setDefaultPaymentMethod = async function (paymentMethodId) {
-  const PaymentMethod = mongoose.model('PaymentMethod');
-  const pm = await PaymentMethod.findOne({ _id: paymentMethodId, user: this._id });
-  if (!pm) throw new Error('Payment method not found');
+  const PaymentMethod = mongoose.model("PaymentMethod");
+  const pm = await PaymentMethod.findOne({
+    _id: paymentMethodId,
+    user: this._id,
+  });
+  if (!pm) throw new Error("Payment method not found");
 
-  await PaymentMethod.updateMany({ user: this._id }, { $set: { isDefault: false } });
+  await PaymentMethod.updateMany(
+    { user: this._id },
+    { $set: { isDefault: false } }
+  );
   pm.isDefault = true;
   await pm.save();
 
   const obj = pm.toObject ? pm.toObject() : JSON.parse(JSON.stringify(pm));
-  delete obj.providerToken; delete obj.providerCustomerId; if (obj.rawCard) { delete obj.rawCard.number; delete obj.rawCard.cvc; delete obj.rawCard.expiryMMYY; }
+  delete obj.providerToken;
+  delete obj.providerCustomerId;
+  if (obj.rawCard) {
+    delete obj.rawCard.number;
+    delete obj.rawCard.cvc;
+    delete obj.rawCard.expiryMMYY;
+  }
   return obj;
 };
 
 UserSchema.methods.removePaymentMethod = async function (paymentMethodId) {
-  const PaymentMethod = mongoose.model('PaymentMethod');
-  const pm = await PaymentMethod.findOne({ _id: paymentMethodId, user: this._id });
-  if (!pm) throw new Error('Payment method not found');
+  const PaymentMethod = mongoose.model("PaymentMethod");
+  const pm = await PaymentMethod.findOne({
+    _id: paymentMethodId,
+    user: this._id,
+  });
+  if (!pm) throw new Error("Payment method not found");
   const wasDefault = !!pm.isDefault;
 
   await PaymentMethod.deleteOne({ _id: paymentMethodId, user: this._id });
 
   // remove reference from user
   if (this.paymentMethods && this.paymentMethods.length) {
-    this.paymentMethods = this.paymentMethods.filter((id) => String(id) !== String(paymentMethodId));
+    this.paymentMethods = this.paymentMethods.filter(
+      (id) => String(id) !== String(paymentMethodId)
+    );
     await this.save();
   }
 
   // if it was default, promote the newest payment method to default
   if (wasDefault) {
-    const replacement = await PaymentMethod.findOne({ user: this._id }).sort({ createdAt: -1 });
+    const replacement = await PaymentMethod.findOne({ user: this._id }).sort({
+      createdAt: -1,
+    });
     if (replacement) {
       replacement.isDefault = true;
       await replacement.save();

@@ -73,6 +73,8 @@ const QuestionSchema = new mongoose.Schema(
         "submitted",
         "approved",
         "rejected",
+        "flagged",
+        "unflagged",
         "quoted",
         "awaiting_payment",
         "paid",
