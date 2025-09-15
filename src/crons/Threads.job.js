@@ -59,7 +59,7 @@ export const autoCloseExpiredThreads = async () => {
     q.timeline.push({ at: now, status: "auto_closed_after_followup_window" });
     await q.save();
 
-    const payoutAmount = Math.round(q.price * (1 - PLATFORM_FEE_PERCENT / 100));
+    const payoutAmount = Math.round(q.priceUSD * (1 - PLATFORM_FEE_PERCENT / 100));
 
 
     if (q.professional.professionalStripeId) {

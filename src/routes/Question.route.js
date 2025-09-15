@@ -26,6 +26,7 @@ router.post("/:id/approve",verifyJWT,trackActive,approveQuestion);
 router.post("/:id/quote", verifyJWT, trackActive,approveAndQuoteQuestion);
 router.post("/:id/reject", verifyJWT, trackActive,rejectQuestion);
 router.post("/:id/pay", verifyJWT, trackActive,payQuestion);
+router.post("/:id/payment-options", authMiddleware, getPaymentOptions);
 router.post("/:id/paid", paidStatusQuestion);
 
 router.post("/stripe/webhook", stripeWebhook);

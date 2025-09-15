@@ -259,6 +259,7 @@ export const payQuestion = asynchandler(async (req, res) => {
   }
   // q.price = price;
   q.priceUSD = priceUSD;
+  q.price=priceUSD;
   const exchangeRates = await fetchExchangeRates("USD");
 
   const rate = exchangeRates[selectedCurrency.toUpperCase()] || 1;
@@ -279,32 +280,39 @@ export const payQuestion = asynchandler(async (req, res) => {
     paidAmount: priceInSelectedCurrency,
   };
   q.status = "awaiting_payment";
-  q.timeline.push({
-    at: new Date(),
-    status: "payment_awaiting",
-    by: req.user._id,
-    note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
-  });
+  const hasPaymentAwaitingEntry = q.timeline.some(
+    entry => entry.status === "payment_awaiting"
+  );
+  if (!hasPaymentAwaitingEntry) {
+    q.timeline.push({
+      at: new Date(),
+      status: "payment_awaiting",
+      by: req.user._id,
+      note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
+    });
+  }
+  
   await q.save();
-  notifyStatusChange(q, "awaiting_payment").catch(() => {});
-  // return res
-  //   .status(200)
-  //   .json(
-  //     new Apiresponse(
-  //       200,
-  //       { clientSecret: paymentIntent.client_secret },
-  //       "Payment initiated"
-  //     )
-  //   );
+  if(!hasPaymentAwaitingEntry){
+    notifyStatusChange(q, "awaiting_payment").catch(() => {});
+  }
   return res.status(200).json(
     new Apiresponse(
       200,
       {
         clientSecret: paymentIntent.client_secret,
         priceUSD,
-        availableCurrencies: Object.keys(exchangeRates)
+        availableCurrencies:
+        [
+          {
+          code: "usd",
+          rate: 1, // Base rate
+          symbol: "$",
+          convertedAmount: priceUSD
+        },
+        ...Object.keys(exchangeRates)
           .filter((code) =>
-            ["USD", "EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
+            ["EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
           )
           .map((code) => ({
             code: code.toLowerCase(),
@@ -312,7 +320,8 @@ export const payQuestion = asynchandler(async (req, res) => {
             symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
             convertedAmount:
               Math.round(priceUSD * exchangeRates[code] * 100) / 100,
-          })),
+          }))
+        ] 
       },
       "Payment initiated"
     )
@@ -524,7 +533,7 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     q.thread.threadClosedEarlier = true;
     penalty = true;
   }
-  const payoutAmount = Math.round(q.price * (1 - totalFeePercent / 100));
+  const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
   q.status = "closed";
   q.thread.closedAt = now;
@@ -540,7 +549,7 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
   if (q.professional.professionalStripeId) {
     await stripe.transfers.create({
       amount: Math.round(payoutAmount * 100),
-      currency: getCurrencyCodeFromSymbol(q.professional.currency),
+      currency: "usd",
       destination: q.professional.professionalStripeId,
       metadata: { questionId: q._id.toString() },
     });
