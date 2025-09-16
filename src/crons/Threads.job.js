@@ -1,3 +1,4 @@
+import { Professional } from "../models/Professional.model.js";
 import { Question } from "../models/Question.model.js";
 import { asynchandler } from "../utils/Asynchandler.js";
 import Stripe from "stripe";
@@ -13,13 +14,6 @@ export const autoCloseExpiredQuestions = async () => {
   console.log(
     `Found ${expiredQuestions.length} expired questions to close. ${expiredQuestions}`
   );
-
-  // for (const q of expiredQuestions) {
-  //   q.status = "closed";
-  //   q.thread.closedAt = now;
-  //   q.timeline.push({ at: now, status: "auto_closed_due_to_no_answer" });
-  //   await q.save();
-  // }
   for (const q of expiredQuestions) {
     q.status = "closed";
     q.thread.closedAt = now;

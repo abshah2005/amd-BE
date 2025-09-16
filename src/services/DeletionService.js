@@ -53,19 +53,6 @@ async function anonymizeUserData(user) {
   try {
     session.startTransaction();
 
-    // Common anonymization
-    await Users.findByIdAndUpdate(
-      user._id,
-      {
-        email: `deleted_${user._id}@anonymous.com`,
-        firstName: "Deleted",
-        lastName: "User",
-        phone: null,
-        profilePic: null,
-        anonymizedAt: new Date(),
-      },
-      { session }
-    );
 
     if (user.isAskerDeleted) {
       // Handle asker questions
@@ -81,6 +68,7 @@ async function anonymizeUserData(user) {
         { session }
       );
     }
+    
 
     if (user.isProDeleted) {
       // For professional profile, anonymize their professional info
@@ -91,6 +79,7 @@ async function anonymizeUserData(user) {
         await Professional.findByIdAndUpdate(
           professionalId,
           {
+            user:null,
             title: "Former Professional",
             about: ["This professional has removed their account."],
             professionalExperiences: [],
@@ -99,6 +88,7 @@ async function anonymizeUserData(user) {
             socialLinks: [],
             verified: false,
             featured: false,
+            isDeleted:true
           },
           { session }
         );
@@ -109,7 +99,10 @@ async function anonymizeUserData(user) {
           {
             $set: {
               roles: user.roles.filter(r => r !== 'professional'),
-              activeRole: user.activeRole === 'professional' ? null : user.activeRole
+              activeRole: user.activeRole === 'professional' ? null : "asker",
+              deletionScheduledAt:null,
+              isProDeleted:false,
+              anonymizedAt:null
             },
             $unset: { professional: "" }
           },

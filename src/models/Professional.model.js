@@ -46,6 +46,7 @@ const ProfessionalSchema = new mongoose.Schema(
         ],
       },
     ],
+    isDeleted: { type: Boolean, default: false },
     subcategories: [String],
     pendingPayouts: [
       {
