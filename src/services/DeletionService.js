@@ -1,15 +1,13 @@
 import mongoose from "mongoose";
-import { Users } from "../models/User.model.js";
+import { Users } from "../models/Users.model.js";
 import { Question } from "../models/Question.model.js";
 import { Professional } from "../models/Professional.model.js";
 
 export const accountDeletionService = {
-  /**
-   * Schedule deletion for a user profile (asker or professional)
-   */
+
   scheduleProfileDeletion: async (userId, profileType) => {
     const deletionDate = new Date();
-    deletionDate.setDate(deletionDate.getDate() + 5); // 5 days from now
+    deletionDate.setDate(deletionDate.getDate() + 5);
 
     if (profileType === "asker") {
       await Users.findByIdAndUpdate(userId, {
@@ -48,62 +46,6 @@ export const accountDeletionService = {
   },
 };
 
-// async function anonymizeUserData(user) {
-//   const session = await mongoose.startSession();
-
-//   try {
-//     session.startTransaction();
-
-//     await Users.findByIdAndUpdate(
-//       user._id,
-//       {
-//         email: `deleted_${user._id}@anonymous.com`,
-//         firstName: "Deleted",
-//         lastName: "User",
-//         phone: null,
-//         profilePic: null,
-//         anonymizedAt: new Date(),
-//       },
-//       { session }
-//     );
-
-//     if (user.isAskerDeleted) {
-//       // Handle asker questions - keep them for statistics but remove personal info
-//       await Question.updateMany(
-//         { asker: user._id },
-//         {
-//           $set: {
-//             body: "This content has been removed.",
-//             title: "Anonymized Question",
-//             attachments: [],
-//           },
-//         },
-//         { session }
-//       );
-//     }
-
-//     if (user.isProDeleted) {
-//       // For professional profile, anonymize their professional info
-//       await Professional.findOneAndUpdate(
-//         { user: user._id },
-//         {
-//           bio: "This professional has removed their account.",
-//           education: [],
-//           experience: [],
-//           profilePic: null,
-//         },
-//         { session }
-//       );
-//     }
-
-//     await session.commitTransaction();
-//   } catch (error) {
-//     await session.abortTransaction();
-//     throw error;
-//   } finally {
-//     session.endSession();
-//   }
-// }
 
 async function anonymizeUserData(user) {
   const session = await mongoose.startSession();
@@ -112,7 +54,7 @@ async function anonymizeUserData(user) {
     session.startTransaction();
 
     // Common anonymization
-    await User.findByIdAndUpdate(
+    await Users.findByIdAndUpdate(
       user._id,
       {
         email: `deleted_${user._id}@anonymous.com`,
@@ -162,7 +104,7 @@ async function anonymizeUserData(user) {
         );
         
         // Then remove the professional reference from the user
-        await User.findByIdAndUpdate(
+        await Users.findByIdAndUpdate(
           user._id,
           {
             $set: {

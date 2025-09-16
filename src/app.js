@@ -8,6 +8,7 @@ import publicProfileRoute from "./routes/PublicProfiles.routes.js";
 import dashboardRoute from "./routes/Dashboard.routes.js";
 import questionRoute from "./routes/Question.route.js";
 import onboardingRoute from "./routes/Onboarding.route.js";
+import accountDeletionRoute from "./routes/AccountDelete.route.js"
 import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
 
 const app = express();
@@ -36,6 +37,7 @@ app.use("/api/public", publicProfileRoute);
 app.use("/api/admin/dashboard", dashboardRoute);
 app.use("/api/questions",questionRoute);
 app.use("/api/onboarding",onboardingRoute);
+app.use("/api/account",accountDeletionRoute);
 
 
 app.use((err, req, res, next) => {

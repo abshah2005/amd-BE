@@ -1,4 +1,3 @@
-import { accountDeletionService } from '../services/DeletionService.js';
 import { Users } from '../models/Users.model.js';
 import { Professional } from '../models/Professional.model.js';
 import { asynchandler } from "../utils/Asynchandler.js";
@@ -35,12 +34,12 @@ import { accountDeletionService } from '../services/DeletionService.js';
     const { profileType } = req.body;
     
     if (profileType === 'asker') {
-      await User.findByIdAndUpdate(userId, { 
+      await Users.findByIdAndUpdate(userId, { 
         isAskerDeleted: false,
         deletionScheduledAt: null
       });
     } else if (profileType === 'professional') {
-      await User.findByIdAndUpdate(userId, { 
+      await Users.findByIdAndUpdate(userId, { 
         isProDeleted: false,
         deletionScheduledAt: null
       });
