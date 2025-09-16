@@ -15,6 +15,7 @@ export const createSpecialization = asynchandler(async (req, res) => {
 
 
 
+
 export const getSpecialization = asynchandler(async (req, res) => {
   const { id } = req.params;
   const specialization = await SpecializationModel.findById(id);
