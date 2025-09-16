@@ -254,6 +254,11 @@ const listProfessionals = asynchandler(async (req, res) => {
   const profMatch = matchClauses.length ? { $and: matchClauses } : {};
 
   var ans = 20;
+  // const excludeCurrentUser =
+  //   req.user &&
+  //   Array.isArray(req.user.roles) &&
+  //   req.user.roles.includes("professional") &&
+  //   mongoose.Types.ObjectId.isValid(String(req.user._id));
   const excludeCurrentUser =
     req.user &&
     Array.isArray(req.user.roles) &&
