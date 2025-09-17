@@ -172,21 +172,52 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   );
 });
 
+// export const getProfessionalPendingQuestions = asynchandler(
+//   async (req, res) => {
+//     const professionalId = req.user.professional?._id;
+//     if (!professionalId) throw new Apierror(403, "Not a professional");
+
+//     const questions = await Question.find({
+//       professional: professionalId,
+//       status: { $nin: ["closed", "rejected"] },
+//     })
+//       .sort({ createdAt: -1 })
+//       .populate("asker");
+
+//     res.status(200).json(new Apiresponse(200, questions, "Pending questions"));
+//   }
+// );
+
 export const getProfessionalPendingQuestions = asynchandler(
   async (req, res) => {
     const professionalId = req.user.professional?._id;
     if (!professionalId) throw new Apierror(403, "Not a professional");
 
-    const questions = await Question.find({
+    const { page = 1, limit = 10, search = "" } = req.query;
+
+    const query = {
       professional: professionalId,
       status: { $nin: ["closed", "rejected"] },
-    })
+    };
+
+    if (search) {
+      query.body = { $regex: search, $options: "i" }; // Search by question body
+    }
+
+    const questions = await Question.find(query)
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit))
       .populate("asker");
 
-    res.status(200).json(new Apiresponse(200, questions, "Pending questions"));
+    const totalQuestions = await Question.countDocuments(query);
+
+    res.status(200).json(
+      new Apiresponse(200, { questions, total: totalQuestions }, "Pending questions")
+    );
   }
 );
+
 
 export const listDashboardUsers = asynchandler(async (req, res) => {
   const { type = "professional", page = 1, limit = 20 } = req.query;
