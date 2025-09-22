@@ -15,7 +15,8 @@ import {
   approveQuestion,
   paidStatusQuestion,
   deleteQuestion,
-  getPaymentOptions
+  getPaymentOptions,
+  listQuestionsByUserType
 } from "../Controllers/Questions.Controller.js";
 import { verifyJWT,trackActive } from "../middlewares/Authentication.middleware.js";
 import { upload } from "../middlewares/Multer.middleware.js";
@@ -35,6 +36,7 @@ router.post("/:id/answer", verifyJWT,trackActive,upload.fields([{ name: "attachm
 router.post("/:id/followup", verifyJWT, trackActive,upload.fields([{ name: "attachments", maxCount: 5 }]),postFollowUp);
 router.post("/:id/close", verifyJWT, trackActive,closeThreadAndPayout);
 router.get("/", verifyJWT, trackActive,listQuestions);
+router.get("/getQuestions",listQuestionsByUserType);
 router.post("/:id/answer-followup", verifyJWT, trackActive,upload.fields([{ name: "attachments", maxCount: 5 }]), answerFollowUp);
 router.post("/:id/feedback", verifyJWT, trackActive,submitFeedback);
 router.get("/:id",verifyJWT,trackActive,getQuestionById);

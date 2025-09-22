@@ -119,7 +119,7 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   const normalize = (s) => String(s || "").replace(/\s+/g, "");
   await prof.populate("user", "firstName lastName");
   const avgRating = prof?.rating || 0;
-  
+
   let payoutsEnabled = false;
   let transfersActive = false;
   let stripeAccountInfo = { accountId: null };
@@ -141,7 +141,10 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
       );
       payoutsEnabled = false;
       transfersActive = false;
-      stripeAccountInfo = { accountId: prof.professionalStripeId, error: err.message || "retrieve_failed" };
+      stripeAccountInfo = {
+        accountId: prof.professionalStripeId,
+        error: err.message || "retrieve_failed",
+      };
     }
   } else {
     // professional has no stripe id — explicitly mark as not allowed
@@ -193,7 +196,11 @@ export const getProfessionalPendingQuestions = asynchandler(
     const professionalId = req.user.professional?._id;
     if (!professionalId) throw new Apierror(403, "Not a professional");
 
-    const { page = 1, limit = 10, search = "" } = req.query;
+    // const { page = 1, limit = 10, search = "" } = req.query;
+
+    const page = Number(req.query.page ?? 1);
+    const limit = Number(req.query.limit ?? 10);
+    const search = req.query.search ?? "";
 
     const query = {
       professional: professionalId,
@@ -207,20 +214,30 @@ export const getProfessionalPendingQuestions = asynchandler(
     const questions = await Question.find(query)
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
-      .limit(Number(limit))
+      .limit(limit)
       .populate("asker");
 
     const totalQuestions = await Question.countDocuments(query);
 
-    res.status(200).json(
-      new Apiresponse(200, { questions, total: totalQuestions }, "Pending questions")
-    );
+    res
+      .status(200)
+      .json(
+        new Apiresponse(
+          200,
+          { questions, total: totalQuestions },
+          "Pending questions"
+        )
+      );
   }
 );
 
-
 export const listDashboardUsers = asynchandler(async (req, res) => {
-  const { type = "professional", page = 1, limit = 20 } = req.query;
+  const {
+    type = "professional",
+    page = 1,
+    limit = 20,
+    search = "",
+  } = req.query;
   const Model = type === "asker" ? Asker : Professional;
   const pageNum = Math.max(1, Number(page));
   const lim = Math.max(1, Math.min(100, Number(limit)));
@@ -240,6 +257,11 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       $match: {
         "user.roles": type,
         // "user.activeRole": type
+        $or: [
+          { "user.firstName": { $regex: search, $options: "i" } },
+          { "user.lastName": { $regex: search, $options: "i" } },
+          { "user.email": { $regex: search, $options: "i" } },
+        ],
       },
     },
     { $sort: { "user.createdAt": -1 } },
@@ -344,6 +366,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       {
         $project: {
           _id: 1,
+          userId:"$user._id",
           name: { $concat: ["$user.firstName", " ", "$user.lastName"] },
           joinedDate: "$user.createdAt",
           email: "$user.email",

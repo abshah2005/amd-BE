@@ -8,6 +8,7 @@ import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
+import {Asker} from "../models/Asker.model.js"
 import { getCurrencyCodeFromSymbol, getSymbolFromCurrencyCode } from "../utils/CurrencyUtil.js";
 
 import {fetchExchangeRates} from "../utils/ExchangeRateUtil.js"
@@ -970,7 +971,7 @@ export const getQuestionById = asynchandler(async (req, res) => {
 
 // ...existing code...
 export const listQuestions = asynchandler(async (req, res) => {
-  const { status, page = 1, limit = 10 } = req.query;
+  const { status, page = 1,search="", limit = 10 } = req.query;
   const filter = {};
 
   // Admin should see everything — do not add asker/professional filters for admin
@@ -990,6 +991,13 @@ export const listQuestions = asynchandler(async (req, res) => {
       ? status.split(",")
       : [status];
     filter.status = { $in: statusList };
+  }
+
+  if (search) {
+    filter.$or = [
+      { title: { $regex: search, $options: 'i' } },
+      { body: { $regex: search, $options: 'i' } }
+    ];
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -1025,55 +1033,77 @@ export const listQuestions = asynchandler(async (req, res) => {
   );
 });
 
-// export const listQuestions = asynchandler(async (req, res) => {
-//   const { status, page = 1, limit = 10 } = req.query;
-//   const filter = {};
 
-//   if (req.user.activeRole === "professional" && req.user.professional) {
-//     filter.professional = req.user.professional._id;
-//   } else if (req.user.activeRole === "asker") {
-//     filter.asker = req.user._id;
-//   }
 
-//   if (status) {
-//     // Accept comma-separated string or array
-//     const statusList = Array.isArray(status)
-//       ? status
-//       : typeof status === "string"
-//       ? status.split(",")
-//       : [status];
-//     filter.status = { $in: statusList };
-//   }
 
-//   const skip = (parseInt(page) - 1) * parseInt(limit);
-//   const total = await Question.countDocuments(filter);
-//   const questions = await Question.find(filter)
-//     .sort({ createdAt: -1 })
-//     .skip(skip)
-//     .limit(parseInt(limit))
-//     .populate({
-//       path: "professional",
-//       populate: {
-//         path: "user",
-//         select: "firstName lastName",
-//       },
-//     })
-//     .populate({
-//       path: "asker",
-//       select: "firstName lastName",
-//     });
 
-//   return res.status(200).json(
-//     new Apiresponse(
-//       200,
-//       {
-//         questions,
-//         total,
-//         page: parseInt(page),
-//         limit: parseInt(limit),
-//         totalPages: Math.ceil(total / limit),
-//       },
-//       "Questions listed"
-//     )
-//   );
-// });
+export const listQuestionsByUserType = asynchandler(async (req, res) => {
+  const { userType, userId, status, page = 1, limit = 10 } = req.query;
+  
+  // Validate required parameters
+  if (!userType || !userId) {
+    throw new Apierror(400, "userType and userId are required parameters");
+  }
+
+  // Validate userType
+  if (!["professional", "asker"].includes(userType)) {
+    throw new Apierror(400, "userType must be either 'professional' or 'asker'");
+  }
+
+  const filter = {};
+
+  // Set filter based on userType
+  if (userType === "professional") {
+    filter.professional = userId;
+  } else {
+    console.log("Fetching asker with ID:", userId);
+    filter.asker = userId;
+  }
+
+  // Add status filter if provided
+  if (status) {
+    const statusList = Array.isArray(status)
+      ? status
+      : typeof status === "string"
+      ? status.split(",")
+      : [status];
+    filter.status = { $in: statusList };
+  }
+
+  // Pagination
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  
+  // Get total count and questions
+  const total = await Question.countDocuments(filter);
+  const questions = await Question.find(filter)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(parseInt(limit))
+    .populate({
+      path: "professional",
+      populate: {
+        path: "user",
+        select: "firstName lastName profilePic",
+      },
+    })
+    .populate({
+      path: "asker",
+      select: "firstName lastName profilePic",
+    });
+
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        questions,
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit),
+        userType,
+        userId
+      },
+      `Questions listed for ${userType} with ID ${userId}`
+    )
+  );
+});
