@@ -1224,6 +1224,9 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
       by: req.user._id,
       note: `Admin reviewed flag and requested reanswer. Note: ${note || "No additional notes"}`
     });
+
+    question.flagging.isFlagged=false;
+
     
     // Notify professional
     // await notifyStatusChange(question, "flag_reviewed_reanswer", 
@@ -1246,6 +1249,7 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
      
 
       // You might want to add a field to payment to track refund status
+    question.flagging.isFlagged=false;
       question.flagging.resolved = true;
       question.flagging.resolvedAt = new Date();
     }
@@ -1256,6 +1260,7 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
   } 
   else if (action === "no_action") {
     // Simply resolve the flag without changes
+    question.flagging.isFlagged=false;
     question.flagging.resolved = true;
     question.flagging.resolvedAt = new Date();
     
