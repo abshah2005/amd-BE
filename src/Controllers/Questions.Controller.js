@@ -9,6 +9,7 @@ import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
 import {Asker} from "../models/Asker.model.js"
+import {Admin} from "../models/Admin.model.js"
 import { getCurrencyCodeFromSymbol, getSymbolFromCurrencyCode } from "../utils/CurrencyUtil.js";
 
 import {fetchExchangeRates} from "../utils/ExchangeRateUtil.js"
@@ -969,7 +970,7 @@ export const getQuestionById = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, question, "Question retrieved successfully"));
 });
 
-// ...existing code...
+
 export const listQuestions = asynchandler(async (req, res) => {
   const { status, page = 1,search="", limit = 10 } = req.query;
   const filter = {};
@@ -1107,3 +1108,174 @@ export const listQuestionsByUserType = asynchandler(async (req, res) => {
     )
   );
 });
+
+
+export const flagQuestion = asynchandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  
+  if (!reason) {
+    throw new Apierror(400, "A reason for flagging is required");
+  }
+  
+  const question = await Question.findById(id);
+  if (!question) {
+    throw new Apierror(404, "Question not found");
+  }
+  
+  // Check if the user is authorized (either asker or professional)
+  const isAsker = String(question.asker) === String(req.user._id);
+  const isAdmin= req.user.role === "admin";
+  console.log(isAdmin );
+  // const isProfessional = req.user.professional && 
+  //                        String(question.professional) === String(req.user.professional._id);
+  
+  if (!isAsker && !isAdmin) {
+    throw new Apierror(403, "You don't have permission to flag this question");
+  }
+  
+  // Don't allow flagging if already flagged
+  if (question.flagging?.isFlagged) {
+    throw new Apierror(400, "This question has already been flagged");
+  }
+  
+  // Set flagging information
+  question.flagging = {
+    isFlagged: true,
+    flaggedBy: isAsker ? "asker" : "admin",
+    flaggedAt: new Date(),
+    flagReason: reason,
+    adminReviewed: false,
+    resolved: false
+  };
+  
+  // Add timeline entry
+  question.timeline.push({
+    at: new Date(),
+    status: "flagged",
+    by: req.user._id,
+    note: `Question flagged by ${isAsker ? "asker" : "professional"}. Reason: ${reason}`
+  });
+  
+  await question.save();
+  
+  // Notify admins via email
+  // try {
+  //   await notifyAdminsAboutFlaggedQuestion(question, isAsker ? "asker" : "professional", reason);
+  // } catch (err) {
+  //   console.error("Failed to send notification about flagged question:", err);
+  //   // Continue execution even if email fails
+  // }
+  
+  return res.status(200).json(
+    new Apiresponse(200, question, "Question has been flagged for review")
+  );
+});
+
+
+
+export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
+  const { id } = req.params;
+  const { action, note } = req.body;
+  
+  if (!action || !["reanswer", "refund", "no_action"].includes(action)) {
+    throw new Apierror(400, "Valid action (reanswer, refund, or no_action) is required");
+  }
+  
+  const isAdmin= Admin.findOne({user:req.user._id}) ? true : false;
+
+  if (!isAdmin) {
+    throw new Apierror(403, "Only administrators can review flagged questions");
+  }
+  
+  const question = await Question.findById(id)
+    .populate("professional")
+    .populate("asker");
+    
+  if (!question) {
+    throw new Apierror(404, "Question not found");
+  }
+  
+  if (!question.flagging?.isFlagged) {
+    throw new Apierror(400, "This question has not been flagged");
+  }
+  
+  if (question.flagging.adminReviewed) {
+    throw new Apierror(400, "This flagged question has already been reviewed");
+  }
+  
+  // Update flagging status
+  question.flagging.adminReviewed = true;
+  question.flagging.adminReviewedAt = new Date();
+  question.flagging.adminAction = action;
+  question.flagging.adminNote = note;
+  
+  // Handle different actions
+  if (action === "reanswer") {
+    // If already answered, set back to awaiting_response
+    if (question.status === "answered" || question.status === "in_thread") {
+      question.status = "paid";
+    }
+    
+    // Add timeline entry
+    question.timeline.push({
+      at: new Date(),
+      status: "flag_reviewed",
+      by: req.user._id,
+      note: `Admin reviewed flag and requested reanswer. Note: ${note || "No additional notes"}`
+    });
+    
+    // Notify professional
+    // await notifyStatusChange(question, "flag_reviewed_reanswer", 
+    //   `An administrator has reviewed this flagged question and requests that you provide a new answer. ${note || ""}`);
+  } 
+  else if (action === "refund") {
+    // Process refund logic here if payment was made
+    if (question.payment?.paid) {
+      // Add your refund processing logic here
+      // This would typically involve your payment processor's refund API
+      
+      // For this example, just mark as refunded in the timeline
+      question.timeline.push({
+        at: new Date(),
+        status: "refund_initiated",
+        by: req.user._id,
+        note: `Admin approved refund after reviewing flag. Note: ${note || "No additional notes"}`
+      });
+      
+     
+
+      // You might want to add a field to payment to track refund status
+      question.flagging.resolved = true;
+      question.flagging.resolvedAt = new Date();
+    }
+    
+    // Notify both parties
+    // await notifyStatusChange(question, "flag_reviewed_refund", 
+    //   `An administrator has reviewed this flagged question and approved a refund. ${note || ""}`);
+  } 
+  else if (action === "no_action") {
+    // Simply resolve the flag without changes
+    question.flagging.resolved = true;
+    question.flagging.resolvedAt = new Date();
+    
+    question.timeline.push({
+      at: new Date(),
+      status: "flag_dismissed",
+      by: req.user._id,
+      note: `Admin reviewed flag and took no action. Note: ${note || "No additional notes"}`
+    });
+    
+    // Notify parties
+    // await notifyStatusChange(question, "flag_reviewed_no_action", 
+    //   `An administrator has reviewed this flagged question and determined no action is needed. ${note || ""}`);
+  }
+  
+  await question.save();
+  
+  return res.status(200).json(
+    new Apiresponse(200, question, `Flagged question reviewed, action: ${action}`)
+  );
+});
+
+

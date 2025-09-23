@@ -32,6 +32,18 @@ const QuestionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    flagging: {
+      isFlagged: { type: Boolean, default: false },
+      flaggedBy: { type: String, enum: ["asker", "admin"] },
+      flaggedAt: Date,
+      flagReason: String,
+      adminReviewed: { type: Boolean, default: false },
+      adminReviewedAt: Date,
+      adminAction: { type: String, enum: ["reanswer", "refund", "no_action"] },
+      adminNote: String,
+      resolved: { type: Boolean, default: false },
+      resolvedAt: Date
+    },
     price: { type: Number, default: 0 },
     proposedBudget: { type: Number, default: 0 },
     feedback: {

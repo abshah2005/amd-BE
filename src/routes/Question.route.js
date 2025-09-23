@@ -16,9 +16,11 @@ import {
   paidStatusQuestion,
   deleteQuestion,
   getPaymentOptions,
-  listQuestionsByUserType
+  listQuestionsByUserType,
+  reviewFlaggedQuestion,
+  flagQuestion
 } from "../Controllers/Questions.Controller.js";
-import { verifyJWT,trackActive } from "../middlewares/Authentication.middleware.js";
+import { verifyJWT,trackActive, verifyAdmin } from "../middlewares/Authentication.middleware.js";
 import { upload } from "../middlewares/Multer.middleware.js";
 
 const router = Router();
@@ -40,6 +42,10 @@ router.get("/getQuestions",listQuestionsByUserType);
 router.post("/:id/answer-followup", verifyJWT, trackActive,upload.fields([{ name: "attachments", maxCount: 5 }]), answerFollowUp);
 router.post("/:id/feedback", verifyJWT, trackActive,submitFeedback);
 router.get("/:id",verifyJWT,trackActive,getQuestionById);
-router.delete("/:id", verifyJWT, trackActive,deleteQuestion)
+router.delete("/:id", verifyJWT, trackActive,deleteQuestion);
+
+router.post("/:id/flag", verifyJWT, flagQuestion);
+router.post("/:id/review-flag", verifyJWT,verifyAdmin, reviewFlaggedQuestion);
+
 
 export default router;
