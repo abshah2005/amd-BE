@@ -8,11 +8,14 @@ import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
-import {Asker} from "../models/Asker.model.js"
-import {Admin} from "../models/Admin.model.js"
-import { getCurrencyCodeFromSymbol, getSymbolFromCurrencyCode } from "../utils/CurrencyUtil.js";
+import { Asker } from "../models/Asker.model.js";
+import { Admin } from "../models/Admin.model.js";
+import {
+  getCurrencyCodeFromSymbol,
+  getSymbolFromCurrencyCode,
+} from "../utils/CurrencyUtil.js";
 
-import {fetchExchangeRates} from "../utils/ExchangeRateUtil.js"
+import { fetchExchangeRates } from "../utils/ExchangeRateUtil.js";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const PLATFORM_FEE_PERCENT = parseFloat(
@@ -221,9 +224,9 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "approved_and_quoted",
     by: req.user._id,
-    note: `Quotes posted: normal $${
-      normalAmount || "-"
-    }, fast $${fastAmount || "-"}`,
+    note: `Quotes posted: normal $${normalAmount || "-"}, fast $${
+      fastAmount || "-"
+    }`,
   });
 
   await q.save();
@@ -236,7 +239,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
 export const getPaymentOptions = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { deliveryType } = req.body;
-  
+
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
@@ -257,10 +260,10 @@ export const getPaymentOptions = asynchandler(async (req, res) => {
   } else {
     throw new Apierror(400, "Invalid delivery type or quote not available");
   }
-  
+
   // Get exchange rates for currency options
   const exchangeRates = await fetchExchangeRates("USD");
-  
+
   return res.status(200).json(
     new Apiresponse(
       200,
@@ -272,7 +275,7 @@ export const getPaymentOptions = asynchandler(async (req, res) => {
             code: "usd",
             rate: 1,
             symbol: "$",
-            convertedAmount: priceUSD
+            convertedAmount: priceUSD,
           },
           ...Object.keys(exchangeRates)
             .filter((code) =>
@@ -284,19 +287,18 @@ export const getPaymentOptions = asynchandler(async (req, res) => {
               symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
               convertedAmount:
                 Math.round(priceUSD * exchangeRates[code] * 100) / 100,
-            }))
-        ]
+            })),
+        ],
       },
       "Payment options retrieved"
     )
   );
 });
 
-
 export const payQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { deliveryType, selectedCurrency = "usd" } = req.body;
-  
+
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (String(q.asker) !== String(req.user._id))
@@ -321,11 +323,11 @@ export const payQuestion = asynchandler(async (req, res) => {
   } else {
     throw new Apierror(400, "Invalid delivery type or quote not available");
   }
-  
+
   // Set question price information
   q.priceUSD = priceUSD;
   q.price = priceUSD;
-  
+
   // Get exchange rate for selected currency
   const exchangeRates = await fetchExchangeRates("USD");
   const rate = exchangeRates[selectedCurrency.toUpperCase()] || 1;
@@ -348,10 +350,10 @@ export const payQuestion = asynchandler(async (req, res) => {
     paidAmount: priceInSelectedCurrency,
   };
   q.status = "awaiting_payment";
-  
+
   // Add timeline entry if not already present
   const hasPaymentAwaitingEntry = q.timeline.some(
-    entry => entry.status === "payment_awaiting"
+    (entry) => entry.status === "payment_awaiting"
   );
   if (!hasPaymentAwaitingEntry) {
     q.timeline.push({
@@ -361,23 +363,24 @@ export const payQuestion = asynchandler(async (req, res) => {
       note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
     });
   }
-  
+
   await q.save();
-  
+
   // Send notification if needed
-  if(!hasPaymentAwaitingEntry){
+  if (!hasPaymentAwaitingEntry) {
     notifyStatusChange(q, "awaiting_payment").catch(() => {});
   }
-  
-  return res.status(200).json(
-    new Apiresponse(
-      200,
-      { clientSecret: paymentIntent.client_secret },
-      "Payment initiated"
-    )
-  );
-});
 
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(
+        200,
+        { clientSecret: paymentIntent.client_secret },
+        "Payment initiated"
+      )
+    );
+});
 
 // export const payQuestion = asynchandler(async (req, res) => {
 //   const { id } = req.params;
@@ -439,7 +442,7 @@ export const payQuestion = asynchandler(async (req, res) => {
 //       note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
 //     });
 //   }
-  
+
 //   await q.save();
 //   if(!hasPaymentAwaitingEntry){
 //     notifyStatusChange(q, "awaiting_payment").catch(() => {});
@@ -469,7 +472,7 @@ export const payQuestion = asynchandler(async (req, res) => {
 //             convertedAmount:
 //               Math.round(priceUSD * exchangeRates[code] * 100) / 100,
 //           }))
-//         ] 
+//         ]
 //       },
 //       "Payment initiated"
 //     )
@@ -741,7 +744,7 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
-  console.log(body)
+  console.log(body);
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (q.status === "closed") throw new Apierror(400, "Already closed");
@@ -970,9 +973,8 @@ export const getQuestionById = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, question, "Question retrieved successfully"));
 });
 
-
 export const listQuestions = asynchandler(async (req, res) => {
-  const { status, page = 1,search="", limit = 10 } = req.query;
+  const { status, page = 1, search = "", limit = 10 } = req.query;
   const filter = {};
 
   // Admin should see everything — do not add asker/professional filters for admin
@@ -996,8 +998,8 @@ export const listQuestions = asynchandler(async (req, res) => {
 
   if (search) {
     filter.$or = [
-      { title: { $regex: search, $options: 'i' } },
-      { body: { $regex: search, $options: 'i' } }
+      { title: { $regex: search, $options: "i" } },
+      { body: { $regex: search, $options: "i" } },
     ];
   }
 
@@ -1034,13 +1036,16 @@ export const listQuestions = asynchandler(async (req, res) => {
   );
 });
 
-
-
-
-
 export const listQuestionsByUserType = asynchandler(async (req, res) => {
-  const { userType, userId, status, page = 1, limit = 10 } = req.query;
-  
+  const {
+    userType,
+    userId,
+    status,
+    page = 1,
+    limit = 10,
+    search = "",
+  } = req.query;
+
   // Validate required parameters
   if (!userType || !userId) {
     throw new Apierror(400, "userType and userId are required parameters");
@@ -1048,7 +1053,10 @@ export const listQuestionsByUserType = asynchandler(async (req, res) => {
 
   // Validate userType
   if (!["professional", "asker"].includes(userType)) {
-    throw new Apierror(400, "userType must be either 'professional' or 'asker'");
+    throw new Apierror(
+      400,
+      "userType must be either 'professional' or 'asker'"
+    );
   }
 
   const filter = {};
@@ -1071,9 +1079,16 @@ export const listQuestionsByUserType = asynchandler(async (req, res) => {
     filter.status = { $in: statusList };
   }
 
+  if (search) {
+    filter.$or = [
+      { title: { $regex: search, $options: "i" } },
+      { body: { $regex: search, $options: "i" } },
+    ];
+  }
+
   // Pagination
   const skip = (parseInt(page) - 1) * parseInt(limit);
-  
+
   // Get total count and questions
   const total = await Question.countDocuments(filter);
   const questions = await Question.find(filter)
@@ -1102,43 +1117,42 @@ export const listQuestionsByUserType = asynchandler(async (req, res) => {
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit),
         userType,
-        userId
+        userId,
       },
       `Questions listed for ${userType} with ID ${userId}`
     )
   );
 });
 
-
 export const flagQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { reason } = req.body;
-  
+
   if (!reason) {
     throw new Apierror(400, "A reason for flagging is required");
   }
-  
+
   const question = await Question.findById(id);
   if (!question) {
     throw new Apierror(404, "Question not found");
   }
-  
+
   // Check if the user is authorized (either asker or professional)
   const isAsker = String(question.asker) === String(req.user._id);
-  const isAdmin= req.user.role === "admin";
-  console.log(isAdmin );
-  // const isProfessional = req.user.professional && 
+  const isAdmin = req.user.role === "admin";
+  console.log(isAdmin);
+  // const isProfessional = req.user.professional &&
   //                        String(question.professional) === String(req.user.professional._id);
-  
+
   if (!isAsker && !isAdmin) {
     throw new Apierror(403, "You don't have permission to flag this question");
   }
-  
+
   // Don't allow flagging if already flagged
   if (question.flagging?.isFlagged) {
     throw new Apierror(400, "This question has already been flagged");
   }
-  
+
   // Set flagging information
   question.flagging = {
     isFlagged: true,
@@ -1146,19 +1160,21 @@ export const flagQuestion = asynchandler(async (req, res) => {
     flaggedAt: new Date(),
     flagReason: reason,
     adminReviewed: false,
-    resolved: false
+    resolved: false,
   };
-  
+
   // Add timeline entry
   question.timeline.push({
     at: new Date(),
     status: "flagged",
     by: req.user._id,
-    note: `Question flagged by ${isAsker ? "asker" : "professional"}. Reason: ${reason}`
+    note: `Question flagged by ${
+      isAsker ? "asker" : "professional"
+    }. Reason: ${reason}`,
   });
-  
+
   await question.save();
-  
+
   // Notify admins via email
   // try {
   //   await notifyAdminsAboutFlaggedQuestion(question, isAsker ? "asker" : "professional", reason);
@@ -1166,121 +1182,129 @@ export const flagQuestion = asynchandler(async (req, res) => {
   //   console.error("Failed to send notification about flagged question:", err);
   //   // Continue execution even if email fails
   // }
-  
-  return res.status(200).json(
-    new Apiresponse(200, question, "Question has been flagged for review")
-  );
+
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(200, question, "Question has been flagged for review")
+    );
 });
-
-
 
 export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { action, note } = req.body;
-  
+
   if (!action || !["reanswer", "refund", "no_action"].includes(action)) {
-    throw new Apierror(400, "Valid action (reanswer, refund, or no_action) is required");
+    throw new Apierror(
+      400,
+      "Valid action (reanswer, refund, or no_action) is required"
+    );
   }
-  
-  const isAdmin= Admin.findOne({user:req.user._id}) ? true : false;
+
+  const isAdmin = Admin.findOne({ user: req.user._id }) ? true : false;
 
   if (!isAdmin) {
     throw new Apierror(403, "Only administrators can review flagged questions");
   }
-  
+
   const question = await Question.findById(id)
     .populate("professional")
     .populate("asker");
-    
+
   if (!question) {
     throw new Apierror(404, "Question not found");
   }
-  
+
   if (!question.flagging?.isFlagged) {
     throw new Apierror(400, "This question has not been flagged");
   }
-  
+
   // if (question.flagging.adminReviewed) {
   //   throw new Apierror(400, "This flagged question has already been reviewed");
   // }
-  
+
   // Update flagging status
   question.flagging.adminReviewed = true;
   question.flagging.adminReviewedAt = new Date();
   question.flagging.adminAction = action;
   question.flagging.adminNote = note;
-  
+
   // Handle different actions
   if (action === "reanswer") {
     // If already answered, set back to awaiting_response
     if (question.status === "answered" || question.status === "in_thread") {
       question.status = "paid";
     }
-    
+
     // Add timeline entry
     question.timeline.push({
       at: new Date(),
       status: "flag_reviewed",
       by: req.user._id,
-      note: `Admin reviewed flag and requested reanswer. Note: ${note || "No additional notes"}`
+      note: `Admin reviewed flag and requested reanswer. Note: ${
+        note || "No additional notes"
+      }`,
     });
 
-    question.flagging.isFlagged=false;
+    question.flagging.isFlagged = false;
 
-    
     // Notify professional
-    // await notifyStatusChange(question, "flag_reviewed_reanswer", 
+    // await notifyStatusChange(question, "flag_reviewed_reanswer",
     //   `An administrator has reviewed this flagged question and requests that you provide a new answer. ${note || ""}`);
-  } 
-  else if (action === "refund") {
+  } else if (action === "refund") {
     // Process refund logic here if payment was made
     if (question.payment?.paid) {
       // Add your refund processing logic here
       // This would typically involve your payment processor's refund API
-      
+
       // For this example, just mark as refunded in the timeline
       question.timeline.push({
         at: new Date(),
         status: "refund_initiated",
         by: req.user._id,
-        note: `Admin approved refund after reviewing flag. Note: ${note || "No additional notes"}`
+        note: `Admin approved refund after reviewing flag. Note: ${
+          note || "No additional notes"
+        }`,
       });
-      
-     
 
       // You might want to add a field to payment to track refund status
-    question.flagging.isFlagged=false;
+      question.flagging.isFlagged = false;
       question.flagging.resolved = true;
       question.flagging.resolvedAt = new Date();
     }
-    
+
     // Notify both parties
-    // await notifyStatusChange(question, "flag_reviewed_refund", 
+    // await notifyStatusChange(question, "flag_reviewed_refund",
     //   `An administrator has reviewed this flagged question and approved a refund. ${note || ""}`);
-  } 
-  else if (action === "no_action") {
+  } else if (action === "no_action") {
     // Simply resolve the flag without changes
-    question.flagging.isFlagged=false;
+    question.flagging.isFlagged = false;
     question.flagging.resolved = true;
     question.flagging.resolvedAt = new Date();
-    
+
     question.timeline.push({
       at: new Date(),
       status: "flag_dismissed",
       by: req.user._id,
-      note: `Admin reviewed flag and took no action. Note: ${note || "No additional notes"}`
+      note: `Admin reviewed flag and took no action. Note: ${
+        note || "No additional notes"
+      }`,
     });
-    
+
     // Notify parties
-    // await notifyStatusChange(question, "flag_reviewed_no_action", 
+    // await notifyStatusChange(question, "flag_reviewed_no_action",
     //   `An administrator has reviewed this flagged question and determined no action is needed. ${note || ""}`);
   }
-  
+
   await question.save();
-  
-  return res.status(200).json(
-    new Apiresponse(200, question, `Flagged question reviewed, action: ${action}`)
-  );
+
+  return res
+    .status(200)
+    .json(
+      new Apiresponse(
+        200,
+        question,
+        `Flagged question reviewed, action: ${action}`
+      )
+    );
 });
-
-
