@@ -21,9 +21,9 @@ app.use(cors({
 }));
 
 
-// startAgenda().then(() => {
-//   console.log("Agenda started and jobs scheduled.");
-// });
+startAgenda().then(() => {
+  console.log("Agenda started and jobs scheduled.");
+});
 
 
 app.use(express.json({ limit: "16kb" }));

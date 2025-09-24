@@ -1175,6 +1175,9 @@ export const flagQuestion = asynchandler(async (req, res) => {
 
   await question.save();
 
+  
+  
+
   // Notify admins via email
   // try {
   //   await notifyAdminsAboutFlaggedQuestion(question, isAsker ? "asker" : "professional", reason);
@@ -1297,6 +1300,37 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
   }
 
   await question.save();
+
+  // try {
+  //   const professionalPopulated = await Professional.findById(question.professional._id).populate("user");
+  //   const askerPopulated = await Users.findById(question.asker._id);
+  //   // await question.populate("asker");
+
+  //   // Notify professional
+  //   if (professionalPopulated?.user?.email) {
+  //     sendQuestionStatusEmail({
+  //       recipientType: "professional",
+  //       status: emailStatus,
+  //       question,
+  //       recipient: professionalPopulated.user,
+  //       customMessage: note ? `Administrator's note: ${note}` : undefined,
+  //     }).catch((err) => console.error("Email to professional failed:", err));
+  //   }
+
+  //   // Notify asker
+  //   if (askerPopulated?.user?.email) {
+  //     sendQuestionStatusEmail({
+  //       recipientType: "asker",
+  //       status: emailStatus,
+  //       question,
+  //       recipient: question.asker,
+  //       customMessage: note ? `Administrator's note: ${note}` : undefined,
+  //     }).catch((err) => console.error("Email to asker failed:", err));
+  //   }
+  // } catch (err) {
+  //   console.error("Failed to send notification about flagged question review:", err);
+  // }
+
 
   return res
     .status(200)
