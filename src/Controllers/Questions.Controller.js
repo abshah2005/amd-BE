@@ -221,7 +221,7 @@ export const approveAndQuoteQuestion = asynchandler(async (req, res) => {
     at: new Date(),
     status: "approved_and_quoted",
     by: req.user._id,
-    note: `Quotes posted: normal ${q.professional.currency}${
+    note: `Quotes posted: normal $ ${
       normalAmount || "-"
     }, fast ${q.professional.currency}${fastAmount || "-"}`,
   });
