@@ -21,6 +21,24 @@ export const sendEmail = async (to, subject, html) => {
   }
 };
 
+function shouldSkipEmail(status, recipientType) {
+  // Define combinations of status and recipient type for which emails should be skipped
+  const skipCombinations = [
+    // Skip "Question Approved" email for professionals
+    { status: "approved", recipientType: "professional" },
+    
+    // Skip "Payment Pending" email for professionals
+    { status: "awaiting_payment", recipientType: "professional" },
+    
+    // Add more combinations here as needed
+    // { status: "status_name", recipientType: "asker_or_professional" },
+  ];
+
+  return skipCombinations.some(
+    combo => combo.status === status && combo.recipientType === recipientType
+  );
+}
+
 export const sendQuestionStatusEmail = async (options) => {
   const {
     recipientType,
@@ -33,6 +51,11 @@ export const sendQuestionStatusEmail = async (options) => {
 
   if (!recipient || !recipient.email) {
     console.error("Cannot send email: recipient email missing");
+    return;
+  }
+
+  if (shouldSkipEmail(status, recipientType)) {
+    console.log(`Skipping email for status: ${status} and recipient: ${recipientType}`);
     return;
   }
 
@@ -111,9 +134,8 @@ export const sendQuestionStatusEmail = async (options) => {
   await sendEmail(recipient.email, emailConfig.subject, html);
 };
 
-/**
- * Get email configuration based on question status and recipient type
- */
+
+
 function getEmailConfigByStatus(
   status,
   recipientType,
@@ -197,6 +219,73 @@ function getEmailConfigByStatus(
         title: "Payment Pending",
         message:
           "The asker has initiated payment for this question. You'll be notified once payment is complete.",
+        buttonText: "View Question",
+      },
+    },
+
+
+    flagged: {
+      admin: {
+        subject: "Question Flagged for Review",
+        title: "Question Flagged",
+        message: `A question has been flagged for review. Please review this question and take appropriate action.`,
+        buttonText: "Review Flagged Question",
+      },
+      professional: {
+        subject: "Question Flagged for Review",
+        title: "Question Has Been Flagged",
+        message: `The asker has flagged this question for review. Our team will review the case and may contact you with further instructions.`,
+        buttonText: "View Question",
+      },
+      asker: {
+        subject: "Question Flag Confirmation",
+        title: "Question Flagged Successfully",
+        message: `Your flag has been submitted. Our team will review your concern and take appropriate action.`,
+        buttonText: "View Question",
+      },
+    },
+
+    flag_reviewed_reanswer: {
+      professional: {
+        subject: "Action Required: Flagged Question Review Complete",
+        title: "Please Provide a New Answer",
+        message: `An administrator has reviewed the flagged question and requests that you provide a new answer to address the concern.`,
+        buttonText: "Provide New Answer",
+      },
+      asker: {
+        subject: "Flag Review Complete",
+        title: "Your Flag Has Been Reviewed",
+        message: `Our team has reviewed your flagged question. The professional has been asked to provide a new answer to address your concern.`,
+        buttonText: "View Question",
+      },
+    },
+
+    flag_reviewed_refund: {
+      professional: {
+        subject: "Question Refunded After Review",
+        title: "Question Refunded",
+        message: `After reviewing the flagged question, our team has decided to issue a refund to the asker.`,
+        buttonText: "View Question",
+      },
+      asker: {
+        subject: "Refund Approved for Your Question",
+        title: "Refund Approved",
+        message: `Our team has reviewed your flagged question and approved a refund. The refund will be processed shortly.`,
+        buttonText: "View Question",
+      },
+    },
+
+    flag_reviewed_no_action: {
+      professional: {
+        subject: "Flagged Question Review Complete",
+        title: "Flag Review Complete - No Action Required",
+        message: `Our team has reviewed the flagged question and determined that no further action is required.`,
+        buttonText: "View Question",
+      },
+      asker: {
+        subject: "Flag Review Complete",
+        title: "Flag Review Complete",
+        message: `Our team has reviewed your flagged question and determined that no further action is needed at this time.`,
         buttonText: "View Question",
       },
     },
