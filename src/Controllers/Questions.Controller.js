@@ -1200,9 +1200,9 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
     throw new Apierror(400, "This question has not been flagged");
   }
   
-  if (question.flagging.adminReviewed) {
-    throw new Apierror(400, "This flagged question has already been reviewed");
-  }
+  // if (question.flagging.adminReviewed) {
+  //   throw new Apierror(400, "This flagged question has already been reviewed");
+  // }
   
   // Update flagging status
   question.flagging.adminReviewed = true;
