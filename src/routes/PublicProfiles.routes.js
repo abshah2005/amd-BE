@@ -8,12 +8,12 @@ import {
   getAskerById,
   getProfessionalByFullName,
 } from "../Controllers/PublicProfiles.controller.js";
-import {verifyJWT} from "../middlewares/Authentication.middleware.js"
+import {optionalVerifyJWT, verifyJWT} from "../middlewares/Authentication.middleware.js"
 
 const router = Router();
 
 /* Professionals */
-router.get("/professionals",listProfessionals); // ?page&limit&q&tag&category&minPrice&maxPrice&featured&country&sort
+router.get("/professionals",optionalVerifyJWT,listProfessionals); // ?page&limit&q&tag&category&minPrice&maxPrice&featured&country&sort
 router.get("/professionals/top", getTopProfessionals); // ?limit
 router.get("/professionals/specialization/:specializationId", getProfessionalsBySpecialization);
 router.get("/professionals/:id", getProfessionalById);

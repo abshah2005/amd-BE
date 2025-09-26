@@ -45,6 +45,46 @@ export const trackActive = async (req, res, next) => {
   next();
 };
 
+const optionalVerifyJWT = asynchandler(async (req, res, next) => {
+  try {
+    const cookieToken = req.cookies?.accessToken;
+    const headerToken = req.header("Authorization")?.replace("Bearer ", "");
+    const token = cookieToken || headerToken;
+    if (!token) {
+      // No token — proceed as anonymous
+      req.user = undefined;
+      return next();
+    }
+
+    // Validate token; if invalid, treat as anonymous (do not throw)
+    let decodedtoken;
+    try {
+      decodedtoken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+    } catch (err) {
+      // invalid token -> ignore and continue as anonymous
+      req.user = undefined;
+      return next();
+    }
+
+    const user = await Users.findById(decodedtoken._id).select(
+      "-password -refreshToken"
+    );
+    if (!user) {
+      req.user = undefined;
+      return next();
+    }
+    if (user.activeRole === "professional") {
+      await user.populate("professional");
+    }
+    req.user = user;
+    next();
+  } catch (err) {
+    console.warn("optionalVerifyJWT error:", err.message || err);
+    req.user = undefined;
+    next();
+  }
+});
+
 const verifyAdmin=asynchandler(async(req,res,next)=>{
   if(req.user && req.user.role==="admin"){
     next();
@@ -54,4 +94,4 @@ const verifyAdmin=asynchandler(async(req,res,next)=>{
   }
 })
 
-export {verifyJWT,verifyAdmin}
+export {verifyJWT,verifyAdmin,optionalVerifyJWT}
