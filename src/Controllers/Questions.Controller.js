@@ -744,6 +744,7 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
+  console.log("ye puri body ha",req.body)
   console.log(body);
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
@@ -763,16 +764,8 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
 
-  // update thread/messages/timeline prior to payout attempt
   q.status = "closed";
   q.thread.closedAt = now;
-  // q.thread.messages.push({
-  //   sender: req.user._id,
-  //   role: "professional",
-  //   body: body,
-  //   attachments: [],
-  //   isFollowUp: false,
-  // });
   q.timeline.push({
     at: new Date(),
     status: "closed",
