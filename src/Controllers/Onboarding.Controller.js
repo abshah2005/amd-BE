@@ -43,6 +43,26 @@ export const getOnboardingStatus = async (req, res) => {
 };
 
 
+export const getStripeDashboardLink = async (req, res) => {
+  const { professionalId } = req.params;
+
+  const professional = await Professional.findById(professionalId);
+
+  if (!professional?.professionalStripeId) {
+    return res.status(400).json({
+      message: "Stripe account not connected",
+    });
+  }
+
+  const loginLink = await stripe.accounts.createLoginLink(
+    professional.professionalStripeId
+  );
+
+  return res.status(200).json({
+    url: loginLink.url,
+  });
+};
+
 export const processBacklogPayments = asynchandler(async (req, res) => {
   const { professionalId } = req.params;
 

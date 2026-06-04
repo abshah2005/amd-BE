@@ -9,7 +9,12 @@ import dashboardRoute from "./routes/Dashboard.routes.js";
 import questionRoute from "./routes/Question.route.js";
 import onboardingRoute from "./routes/Onboarding.route.js";
 import accountDeletionRoute from "./routes/AccountDelete.route.js"
-import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
+// import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
+import dns from "dns"
+
+
+dns.setServers(["1.1.1.1","8.8.8.8"])
+
 
 const app = express();
 
@@ -21,9 +26,9 @@ app.use(cors({
 }));
 
 
-startAgenda().then(() => {
-  console.log("Agenda started and jobs scheduled.");
-});
+// startAgenda().then(() => {
+//   console.log("Agenda started and jobs scheduled.");
+// });
 
 
 app.use(express.json({ limit: "16kb" }));

@@ -13,7 +13,36 @@ export const createSpecialization = asynchandler(async (req, res) => {
   return res.status(201).json(new Apiresponse(201, specialization, "Specialization created"));
 });
 
+export const createSpecializationsBulk = asynchandler(async (req, res) => {
+  const payload = req.body;
+  if (!Array.isArray(payload) || payload.length === 0) {
+    throw new Apierror(400, "Payload must be a non-empty array of { category, subCategories }");
+  }
 
+  const ops = payload.map(({ category, subCategories = [] }) => ({
+    updateOne: {
+      filter: { category },
+      update: { $setOnInsert: { category, subCategories } },
+      upsert: true,
+    },
+  }));
+
+  const result = await SpecializationModel.bulkWrite(ops, { ordered: false });
+  const createdCount = result.upsertedCount || 0;
+
+  const categories = payload.map((p) => p.category);
+  const specializations = await SpecializationModel.find({ category: { $in: categories } });
+
+  return res
+    .status(201)
+    .json(
+      new Apiresponse(
+        201,
+        { totalRequested: payload.length, created: createdCount, specializations },
+        "Bulk specializations processed"
+      )
+    );
+});
 
 
 export const getSpecialization = asynchandler(async (req, res) => {

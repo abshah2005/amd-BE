@@ -6,13 +6,14 @@ import {
   deleteSpecialization,
   getAllSpecializations,
   getTopSpecializations,
-  // bulkCreateSpecializations
+  createSpecializationsBulk
 } from "../Controllers/Specializations.Controller.js";
 import { verifyJWT } from "../middlewares/Authentication.middleware.js";
 
 const router = Router();
 
 router.post("/", createSpecialization);
+router.post("/createBulk",createSpecializationsBulk)
 router.get("/:id", getSpecialization); // get one
 router.put("/:id", updateSpecialization); // update
 router.delete("/:id", deleteSpecialization);
