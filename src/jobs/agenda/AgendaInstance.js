@@ -1,10 +1,10 @@
-// import Agenda from "agenda";
-// import { DB_NAME } from "../../constants.js";
+import Agenda from "agenda";
+import mongoose from "mongoose";
 
+const agenda = new Agenda({
+  mongo: mongoose.connection.db,
+  collection: "agendaJobs",
+  processEvery: "30 seconds",
+});
 
-// const agenda = new Agenda({
-//   db: { address: `${process.env.MONGODB_URI}/${DB_NAME}`, collection: "agendaJobs" },
-//   processEvery: "30 seconds", 
-// });
-
-// export default agenda;
+export default agenda;
