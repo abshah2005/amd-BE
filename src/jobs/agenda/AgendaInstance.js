@@ -1,10 +1,2 @@
-import Agenda from "agenda";
-import mongoose from "mongoose";
-
-const agenda = new Agenda({
-  mongo: mongoose.connection.db,
-  collection: "agendaJobs",
-  processEvery: "30 seconds",
-});
-
-export default agenda;
+// Agenda removed — jobs are now handled by node-cron via CronScheduler
+export default null;
