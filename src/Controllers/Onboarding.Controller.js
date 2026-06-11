@@ -167,7 +167,7 @@ export const processBacklogPayments = asynchandler(async (req, res) => {
 
 export const onboardProfessionalToStripe = async (req, res) => {
   try {
-    const { professionalId,country = "US" } = req.body;
+    const { professionalId,country = "GB" } = req.body;
     const professional = await Professional.findById(professionalId).populate(
       "user"
     );

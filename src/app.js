@@ -19,7 +19,7 @@ dns.setServers(["1.1.1.1","8.8.8.8"])
 const app = express();
 
 app.use(cors({
-  origin:[process.env.FRONTEND_URL],
+  origin:[process.env.FRONTEND_URL,"https://askmedirect.com"],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
