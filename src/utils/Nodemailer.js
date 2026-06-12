@@ -563,7 +563,7 @@ export function payoutSentTemplate({ logoUrl, proName, invoiceNumber, invoiceDat
 }
 
 // small helpers used by templates
-function escapeHtml(str) {
+export function escapeHtml(str) {
   if (!str) return "";
   return String(str)
     .replace(/&/g, "&amp;")
@@ -571,7 +571,7 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-function formatUSD(n) {
+export function formatUSD(n) {
   const num = Number(n || 0);
   return `$${num.toFixed(2)}`;
 }

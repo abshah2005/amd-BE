@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { Invoice } from "../models/Invoice.model.js";
 import { Users } from "../models/Users.model.js";
 import { Professional } from "../models/Professional.model.js";
-import { paymentReceivedTemplate, payoutPendingTemplate, payoutSentTemplate, sendInvoiceEmail } from "../utils/Nodemailer.js";
+import { paymentReceivedTemplate, payoutPendingTemplate, payoutSentTemplate, sendInvoiceEmail,formatUSD } from "../utils/Nodemailer.js";
 
 const PLATFORM_FEE_PERCENT = parseFloat(process.env.PLATFORM_FEE_PERCENT || "12");
 const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(process.env.EARLY_CLOSE_PENALTY_PERCENT || "3");
