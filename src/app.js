@@ -9,6 +9,7 @@ import dashboardRoute from "./routes/Dashboard.routes.js";
 import questionRoute from "./routes/Question.route.js";
 import onboardingRoute from "./routes/Onboarding.route.js";
 import accountDeletionRoute from "./routes/AccountDelete.route.js"
+import invoicesRoute from "./routes/Invoice.route.js"
 // import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
 import dns from "dns"
 
@@ -43,6 +44,7 @@ app.use("/api/admin/dashboard", dashboardRoute);
 app.use("/api/questions",questionRoute);
 app.use("/api/onboarding",onboardingRoute);
 app.use("/api/account",accountDeletionRoute);
+app.use("/api/invoices",invoicesRoute)
 
 
 app.use((err, req, res, next) => {

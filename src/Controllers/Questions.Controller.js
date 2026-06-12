@@ -7,6 +7,7 @@ import { Apierror } from "../utils/Apierror.js";
 import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
+import { createPaymentReceivedInvoice, createPayoutSentInvoice, createPayoutPendingInvoice } from "../services/Invoice.service.js";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
 import { Asker } from "../models/Asker.model.js";
 import { Admin } from "../models/Admin.model.js";
@@ -382,102 +383,6 @@ export const payQuestion = asynchandler(async (req, res) => {
     );
 });
 
-// export const payQuestion = asynchandler(async (req, res) => {
-//   const { id } = req.params;
-//   const { deliveryType, selectedCurrency = "usd" } = req.body;
-//   const q = await Question.findById(id).populate("professional");
-//   if (!q) throw new Apierror(404, "Question not found");
-//   if (String(q.asker) !== String(req.user._id))
-//     throw new Apierror(403, "Not asker");
-//   if (
-//     q.status !== "approved" &&
-//     q.status !== "quoted" &&
-//     q.status !== "awaiting_payment"
-//   )
-//     throw new Apierror(400, "Not approved or quoted yet");
-
-//   let priceUSD = 0;
-//   if (deliveryType === "fast" && q.quote.fast?.amount) {
-//     priceUSD = q.quote.fast.amount;
-//     q.deliveryType = "fast";
-//     if (q.answerByFast) q.answerBy = q.answerByFast;
-//   } else if (deliveryType === "normal" && q.quote.normal?.amount) {
-//     priceUSD = q.quote.normal.amount;
-//     q.deliveryType = "normal";
-//     if (q.answerByNormal) q.answerBy = q.answerByNormal;
-//   } else {
-//     throw new Apierror(400, "Invalid delivery type or quote not available");
-//   }
-//   // q.price = price;
-//   q.priceUSD = priceUSD;
-//   q.price=priceUSD;
-//   const exchangeRates = await fetchExchangeRates("USD");
-
-//   const rate = exchangeRates[selectedCurrency.toUpperCase()] || 1;
-//   const priceInSelectedCurrency = Math.round(priceUSD * rate * 100) / 100;
-
-//   const paymentIntent = await stripe.paymentIntents.create({
-//     amount: Math.round(priceInSelectedCurrency * 100),
-//     currency: selectedCurrency.toLowerCase(),
-//     metadata: { questionId: q._id.toString(), priceUSD: priceUSD.toString() },
-//   });
-
-//   q.payment = {
-//     paid: false,
-//     paymentProvider: "stripe",
-//     paymentReference: paymentIntent.id,
-//     amountUSD: priceUSD,
-//     paidCurrency: selectedCurrency,
-//     paidAmount: priceInSelectedCurrency,
-//   };
-//   q.status = "awaiting_payment";
-//   const hasPaymentAwaitingEntry = q.timeline.some(
-//     entry => entry.status === "payment_awaiting"
-//   );
-//   if (!hasPaymentAwaitingEntry) {
-//     q.timeline.push({
-//       at: new Date(),
-//       status: "payment_awaiting",
-//       by: req.user._id,
-//       note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
-//     });
-//   }
-
-//   await q.save();
-//   if(!hasPaymentAwaitingEntry){
-//     notifyStatusChange(q, "awaiting_payment").catch(() => {});
-//   }
-//   return res.status(200).json(
-//     new Apiresponse(
-//       200,
-//       {
-//         clientSecret: paymentIntent.client_secret,
-//         priceUSD,
-//         availableCurrencies:
-//         [
-//           {
-//           code: "usd",
-//           rate: 1, // Base rate
-//           symbol: "$",
-//           convertedAmount: priceUSD
-//         },
-//         ...Object.keys(exchangeRates)
-//           .filter((code) =>
-//             ["EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
-//           )
-//           .map((code) => ({
-//             code: code.toLowerCase(),
-//             rate: exchangeRates[code],
-//             symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
-//             convertedAmount:
-//               Math.round(priceUSD * exchangeRates[code] * 100) / 100,
-//           }))
-//         ]
-//       },
-//       "Payment initiated"
-//     )
-//   );
-// });
 
 export const paidStatusQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
@@ -493,9 +398,21 @@ export const paidStatusQuestion = asynchandler(async (req, res) => {
       by: q.asker,
       note: "Your payment is complete! 🎉 We've notified the professional — they'll review your question and respond within the selected delivery time.",
     });
+    
     await q.save();
   }
 
+  try {
+    const invoice = await createPaymentReceivedInvoice(q);
+    if (invoice) {
+      // Persist invoice reference on question if service didn't already set it
+      q.payment.invoiceId = invoice._id;
+      q.payment.invoiceUrl = q.payment.invoiceUrl || invoice.publicToken ? `${process.env.APP_BASE_URL || "https://yourapp.com"}/invoices/view/${invoice.publicToken}` : q.payment.invoiceUrl;
+    }
+  } catch (err) {
+    console.error("Failed to create payment-received invoice:", err);
+  }
+   
   await q.save();
   notifyStatusChange(q, "paid").catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Question paid"));
@@ -665,11 +582,12 @@ export const answerFollowUp = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, q, "Follow-up answer posted"));
 });
 
-// Professional closes thread (payout logic)
+// original code 
 // export const closeThreadAndPayout = asynchandler(async (req, res) => {
 //   const { id } = req.params;
 //   const { body } = req.body;
-//   console.log(body)
+//   console.log("ye puri body ha",req.body)
+//   console.log(body);
 //   const q = await Question.findById(id).populate("professional");
 //   if (!q) throw new Apierror(404, "Question not found");
 //   if (q.status === "closed") throw new Apierror(400, "Already closed");
@@ -687,15 +605,9 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 //   }
 //   const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
 //   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
+
 //   q.status = "closed";
 //   q.thread.closedAt = now;
-//   q.thread.messages.push({
-//       sender: req.user._id,
-//       role: "professional",
-//       body: body,
-//       attachments:[],
-//       isFollowUp: false,
-//   });
 //   q.timeline.push({
 //     at: new Date(),
 //     status: "closed",
@@ -705,28 +617,103 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 
 //   await q.save();
 
+//   // Attempt payout if stripe account exists; otherwise store pending payout.
 //   if (q.professional.professionalStripeId) {
-//     await stripe.transfers.create({
-//       amount: Math.round(payoutAmount * 100),
-//       currency: "usd",
-//       destination: q.professional.professionalStripeId,
-//       metadata: { questionId: q._id.toString() },
-//     });
-//     console.log(
-//       `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
-//     );
-//   }else{
+//     try {
+//       // retrieve account and check payouts/capabilities before attempting transfer
+//       const account = await stripe.accounts.retrieve(
+//         q.professional.professionalStripeId
+//       );
+
+//       const payoutsEnabled = !!account.payouts_enabled;
+//       const transfersActive = account.capabilities?.transfers === "active";
+
+//       if (payoutsEnabled && transfersActive) {
+//         try {
+//           await stripe.transfers.create({
+//             amount: Math.round(payoutAmount * 100),
+//             currency: "usd",
+//             destination: q.professional.professionalStripeId,
+//             metadata: { questionId: q._id.toString() },
+//           });
+//           console.log(
+//             `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
+//           );
+
+//           try {
+//             const invoice = await createPayoutSentInvoice(q, payoutAmount, transfer.id, penalty);
+//             if (invoice) {
+//               q.payoutInvoiceId = invoice._id;
+//               await q.save();
+//             }
+//           } catch (invErr) {
+//             console.error("Failed to create payout-sent invoice:", invErr);
+//           }
+
+//         } catch (txErr) {
+//           // transfer failed -> fallback to pendingPayouts
+//           console.error(
+//             `Stripe transfer failed for question ${q._id}, saving to pendingPayouts:`,
+//             txErr
+//           );
+//           await Professional.findByIdAndUpdate(q.professional._id, {
+//             $push: {
+//               pendingPayouts: {
+//                 amount: payoutAmount,
+//                 questionId: q._id,
+//                 timestamp: new Date(),
+//                 paid: false,
+//               },
+//             },
+//           });
+//         }
+//       } else {
+//         // account not ready for payouts -> store pending payout instead of throwing
+//         console.log(
+//           `Stripe account ${q.professional.professionalStripeId} not ready (payoutsEnabled=${payoutsEnabled}, transfersActive=${transfersActive}). Saving payout to pendingPayouts.`
+//         );
+//         await Professional.findByIdAndUpdate(q.professional._id, {
+//           $push: {
+//             pendingPayouts: {
+//               amount: payoutAmount,
+//               questionId: q._id,
+//               timestamp: new Date(),
+//               paid: false,
+//             },
+//           },
+//         });
+//       }
+//     } catch (accErr) {
+//       // failed to retrieve account or other stripe error -> fallback to pendingPayouts
+//       console.error(
+//         `Error checking Stripe account for professional ${q.professional._id}. Saving payout to pendingPayouts.`,
+//         accErr
+//       );
+//       await Professional.findByIdAndUpdate(q.professional._id, {
+//         $push: {
+//           pendingPayouts: {
+//             amount: payoutAmount,
+//             questionId: q._id,
+//             timestamp: new Date(),
+//             paid: false,
+//           },
+//         },
+//       });
+//     }
+//   } else {
+//     // no stripe id -> store pending payout
 //     await Professional.findByIdAndUpdate(q.professional._id, {
 //       $push: {
 //         pendingPayouts: {
 //           amount: payoutAmount,
 //           questionId: q._id,
 //           timestamp: new Date(),
-//           paid: false
-//         }
-//       }
+//           paid: false,
+//         },
+//       },
 //     });
 //   }
+
 //   notifyStatusChange(q, "closed", body).catch(() => {});
 //   return res
 //     .status(200)
@@ -740,6 +727,8 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 //       )
 //     );
 // });
+
+
 
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
@@ -788,21 +777,81 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
 
       if (payoutsEnabled && transfersActive) {
         try {
-          await stripe.transfers.create({
+          const transfer = await stripe.transfers.create({
             amount: Math.round(payoutAmount * 100),
             currency: "usd",
             destination: q.professional.professionalStripeId,
             metadata: { questionId: q._id.toString() },
           });
+          
           console.log(
             `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
           );
+
+          // Create payout-sent invoice
+          try {
+            const invoice = await createPayoutSentInvoice(q, payoutAmount, transfer.id, penalty);
+            if (invoice) {
+              q.payoutInvoiceId = invoice._id;
+              await q.save();
+            }
+          } catch (invErr) {
+            console.error("Failed to create payout-sent invoice:", invErr);
+          }
         } catch (txErr) {
-          // transfer failed -> fallback to pendingPayouts
+          // transfer failed -> fallback to pendingPayouts + create pending invoice
           console.error(
             `Stripe transfer failed for question ${q._id}, saving to pendingPayouts:`,
             txErr
           );
+
+          try {
+            const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
+            await Professional.findByIdAndUpdate(q.professional._id, {
+              $push: {
+                pendingPayouts: {
+                  amount: payoutAmount,
+                  questionId: q._id,
+                  timestamp: new Date(),
+                  paid: false,
+                  invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
+                },
+              },
+            });
+          } catch (pushErr) {
+            console.error("Failed to create pending payout invoice or update professional:", pushErr);
+            await Professional.findByIdAndUpdate(q.professional._id, {
+              $push: {
+                pendingPayouts: {
+                  amount: payoutAmount,
+                  questionId: q._id,
+                  timestamp: new Date(),
+                  paid: false,
+                },
+              },
+            });
+          }
+        }
+      } else {
+        // account not ready for payouts -> store pending payout + invoice
+        console.log(
+          `Stripe account ${q.professional.professionalStripeId} not ready (payoutsEnabled=${payoutsEnabled}, transfersActive=${transfersActive}). Saving payout to pendingPayouts.`
+        );
+        try {
+          const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
+          await Professional.findByIdAndUpdate(q.professional._id, {
+            $push: {
+              pendingPayouts: {
+                amount: payoutAmount,
+                questionId: q._id,
+                timestamp: new Date(),
+                paid: false,
+                invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
+              },
+            },
+          });
+        } catch (pushErr) {
+          console.error("Failed to create pending payout invoice or update professional:", pushErr);
           await Professional.findByIdAndUpdate(q.professional._id, {
             $push: {
               pendingPayouts: {
@@ -814,11 +863,28 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
             },
           });
         }
-      } else {
-        // account not ready for payouts -> store pending payout instead of throwing
-        console.log(
-          `Stripe account ${q.professional.professionalStripeId} not ready (payoutsEnabled=${payoutsEnabled}, transfersActive=${transfersActive}). Saving payout to pendingPayouts.`
-        );
+      }
+    } catch (accErr) {
+      // failed to retrieve account or other stripe error -> fallback to pendingPayouts + invoice
+      console.error(
+        `Error checking Stripe account for professional ${q.professional._id}. Saving payout to pendingPayouts.`,
+        accErr
+      );
+      try {
+        const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
+        await Professional.findByIdAndUpdate(q.professional._id, {
+          $push: {
+            pendingPayouts: {
+              amount: payoutAmount,
+              questionId: q._id,
+              timestamp: new Date(),
+              paid: false,
+              invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
+            },
+          },
+        });
+      } catch (pushErr) {
+        console.error("Failed to create pending payout invoice or update professional:", pushErr);
         await Professional.findByIdAndUpdate(q.professional._id, {
           $push: {
             pendingPayouts: {
@@ -830,12 +896,24 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
           },
         });
       }
-    } catch (accErr) {
-      // failed to retrieve account or other stripe error -> fallback to pendingPayouts
-      console.error(
-        `Error checking Stripe account for professional ${q.professional._id}. Saving payout to pendingPayouts.`,
-        accErr
-      );
+    }
+  } else {
+    // no stripe id -> create pending invoice and store pending payout
+    try {
+      const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
+      await Professional.findByIdAndUpdate(q.professional._id, {
+        $push: {
+          pendingPayouts: {
+            amount: payoutAmount,
+            questionId: q._id,
+            timestamp: new Date(),
+            paid: false,
+            invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
+          },
+        },
+      });
+    } catch (pushErr) {
+      console.error("Failed to create pending payout invoice or update professional:", pushErr);
       await Professional.findByIdAndUpdate(q.professional._id, {
         $push: {
           pendingPayouts: {
@@ -847,18 +925,6 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
         },
       });
     }
-  } else {
-    // no stripe id -> store pending payout
-    await Professional.findByIdAndUpdate(q.professional._id, {
-      $push: {
-        pendingPayouts: {
-          amount: payoutAmount,
-          questionId: q._id,
-          timestamp: new Date(),
-          paid: false,
-        },
-      },
-    });
   }
 
   notifyStatusChange(q, "closed", body).catch(() => {});
@@ -874,6 +940,7 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
       )
     );
 });
+
 
 export const submitFeedback = asynchandler(async (req, res) => {
   const { id } = req.params;
