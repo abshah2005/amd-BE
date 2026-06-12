@@ -741,7 +741,7 @@ const forgotPassword = asynchandler(async (req, res) => {
   console.log(`Password reset link for ${user.email}: ${resetLink}`);
 
   //uncomment it when sendgrid creds are available
-  // await sendEmail(mailOptions.to, mailOptions.subject, mailOptions.html);
+  await sendEmail(mailOptions.to, mailOptions.subject, mailOptions.html);
   res
     .status(200)
     .json(new Apiresponse(200, null, "Password reset link sent to email"));
