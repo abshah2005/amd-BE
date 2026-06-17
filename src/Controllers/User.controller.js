@@ -708,6 +708,27 @@ const getCurrentUser = asynchandler(async (req, res) => {
   res.status(200).json(req.user);
 });
 
+
+const testSendEmail = asynchandler(async (req, res) => {
+  const to = req.body?.to || req.query?.to;
+  if (!to) throw new Apierror(400, "Recipient email (to) is required");
+
+  const subject = req.body?.subject || "AskMeDirect — Test email";
+  const html =
+    req.body?.html ||
+    `<div style="font-family: Arial, sans-serif;">
+       <h3>AskMeDirect — Test Email</h3>
+       <p>This is a test email sent from the server to verify email delivery.</p>
+       <p>If you received this, the email system is working.</p>
+     </div>`;
+
+  await sendEmail(to, subject, html);
+
+  return res
+    .status(200)
+    .json(new Apiresponse(200, null, `Test email sent to ${to}`));
+});
+
 const forgotPassword = asynchandler(async (req, res) => {
   const { email } = req.body;
   if (!email) {
@@ -1155,5 +1176,6 @@ export {
   toggleActiveRole,
   getRegistrationState,
   linkedinCallback,
+  testSendEmail,
   getLinkedInProfile,
 };

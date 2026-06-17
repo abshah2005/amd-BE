@@ -41,8 +41,8 @@ export const getDashboardStats = asynchandler(async (req, res) => {
         totalPlatformEarnings,
         avgRating,
       },
-      "Dashboard stats"
-    )
+      "Dashboard stats",
+    ),
   );
 });
 
@@ -51,10 +51,10 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   if (!professionalId) throw new Apierror(403, "Not a professional");
 
   const PLATFORM_FEE_PERCENT = parseFloat(
-    process.env.PLATFORM_FEE_PERCENT || "12"
+    process.env.PLATFORM_FEE_PERCENT || "12",
   );
   const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
-    process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
+    process.env.EARLY_CLOSE_PENALTY_PERCENT || "3",
   );
 
   const activeQuestions = await Question.countDocuments({
@@ -137,7 +137,7 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
       // log and treat as not ready for payouts
       console.error(
         `Failed to retrieve Stripe account for professional ${prof._id}:`,
-        err
+        err,
       );
       payoutsEnabled = false;
       transfersActive = false;
@@ -167,11 +167,11 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
         },
         totalEarnings: netReceived,
         shareUrl: `${process.env.FRONTEND_URL}/profile/${normalize(
-          prof.user.firstName
+          prof.user.firstName,
         )}_${normalize(prof.user.lastName)}`,
       },
-      "Dashboard stats"
-    )
+      "Dashboard stats",
+    ),
   );
 });
 
@@ -225,10 +225,10 @@ export const getProfessionalPendingQuestions = asynchandler(
         new Apiresponse(
           200,
           { questions, total: totalQuestions },
-          "Pending questions"
-        )
+          "Pending questions",
+        ),
       );
-  }
+  },
 );
 
 export const listDashboardUsers = asynchandler(async (req, res) => {
@@ -318,6 +318,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       {
         $project: {
           _id: 1,
+          userId: "$user._id",
           name: { $concat: ["$user.firstName", " ", "$user.lastName"] },
           joinedDate: "$user.createdAt",
           email: "$user.email",
@@ -333,8 +334,17 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
           featured: "$featured",
           verified: "$verified",
           status: { $cond: [{ $eq: ["$user.isActive", true] }, true, false] },
+          isDeleted: { $ifNull: ["$user.isProDeleted", false] },
+          deletionScheduled: {
+            $cond: [
+              { $ifNull: ["$user.deletionScheduledAt", false] },
+              true,
+              false,
+            ],
+          },
+          deletionByAdmin: { $ifNull: ["$user.isProDeletedByAdmin", false] },
         },
-      }
+      },
     );
   } else {
     pipeline.push(
@@ -366,7 +376,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       {
         $project: {
           _id: 1,
-          userId:"$user._id",
+          userId: "$user._id",
           name: { $concat: ["$user.firstName", " ", "$user.lastName"] },
           joinedDate: "$user.createdAt",
           email: "$user.email",
@@ -380,8 +390,17 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
           },
           questionsAnswered: { $literal: 0 },
           status: { $cond: [{ $eq: ["$user.isActive", true] }, true, false] },
+          isDeleted: { $ifNull: ["$user.isAskerDeleted", false] },
+          deletionScheduled: {
+            $cond: [
+              { $ifNull: ["$user.deletionScheduledAt", false] },
+              true,
+              false,
+            ],
+          },
+          deletionByAdmin: { $ifNull: ["$user.isAskerDeletedByAdmin", false] },
         },
-      }
+      },
     );
   }
 
@@ -392,7 +411,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       new Apiresponse(
         200,
         { results: data, page: pageNum, limit: lim },
-        "Users list"
-      )
+        "Users list",
+      ),
     );
 });
