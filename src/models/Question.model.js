@@ -107,6 +107,7 @@ const QuestionSchema = new mongoose.Schema(
       messages: [MessageSchema],
       followUpWindowExpiresAt: Date,
       closedAt: Date,
+      followUpCount: { type: Number, default: 0 },
       threadClosedEarlier: { type: Boolean, default: false },
     },
     timeline: [

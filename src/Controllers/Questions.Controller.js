@@ -452,10 +452,10 @@ export const stripeWebhook = asynchandler(async (req, res) => {
   res.status(200).send("Received");
 });
 
+
 export const postAnswer = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
-  console.log(body);
   let attachmentsList = [];
 
   const q = await Question.findById(id);
@@ -469,20 +469,33 @@ export const postAnswer = asynchandler(async (req, res) => {
       ? q.attachments.concat(attachmentsList)
       : attachmentsList;
   }
-  console.log(attachmentsList);
 
   if (q.status === "paid" || q.status === "awaiting_response") {
+    // Initial answer
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body: body,
+      body,
       attachments: attachmentsList,
       isFollowUp: false,
     });
     q.status = "answered";
     q.thread.followUpWindowExpiresAt = new Date(Date.now() + 48 * 3600 * 1000);
-  } else if (q.status === "in_thread" || q.status === "answered") {
-    // Follow-up answer logic
+    q.timeline.push({
+      at: new Date(),
+      status: "answered",
+      by: req.user._id,
+      note: "Question answered by professional.",
+    });
+
+    await q.save();
+    notifyStatusChange(q, "answered").catch(() => {});
+    return res.status(200).json(new Apiresponse(200, q, "Answer posted successfully"));
+
+  } else if (q.status === "in_thread") {
+    // Follow-up answer
+    const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS || "1");
+
     if (
       !q.thread.followUpWindowExpiresAt ||
       new Date() > new Date(q.thread.followUpWindowExpiresAt)
@@ -492,21 +505,41 @@ export const postAnswer = asynchandler(async (req, res) => {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body: body,
+      body,
       attachments: attachmentsList,
       isFollowUp: true,
     });
+    // q.timeline.push({
+    //   at: new Date(),
+    //   status: "followup_answered",
+    //   by: req.user._id,
+    //   note: `Follow-up question #${q.thread.followUpCount} answered.`,
+    // });
+
+    if (q.thread.followUpCount >= MAX_FOLLOWUPS) {
+      // All follow-ups exhausted — close the thread
+      q.status = "closed";
+      q.thread.closedAt = new Date();
+      q.timeline.push({
+        at: new Date(),
+        status: "closed",
+        by: req.user._id,
+        note: "Thread closed after all follow-ups answered.",
+      });
+      await q.save();
+      notifyStatusChange(q, "closed").catch(() => {});
+      return res.status(200).json(new Apiresponse(200, q, "Follow-up answered and thread closed"));
+    } else {
+      // More follow-ups still available
+      q.status = "answered";
+      await q.save();
+      notifyStatusChange(q, "answered").catch(() => {});
+      return res.status(200).json(new Apiresponse(200, q, "Follow-up answered, thread still open"));
+    }
+
   } else {
     throw new Apierror(400, "Invalid status for posting an answer");
   }
-
-  await q.save();
-  if (q.status === "answered") {
-    notifyStatusChange(q, "answered").catch(() => {});
-  }
-  return res
-    .status(200)
-    .json(new Apiresponse(200, q, "Answer posted successfully"));
 });
 
 // Asker posts follow-up (within 48h window)
@@ -526,6 +559,24 @@ export const postFollowUp = asynchandler(async (req, res) => {
     new Date() > new Date(q.thread.followUpWindowExpiresAt)
   )
     throw new Apierror(400, "Follow-up window expired");
+
+
+  const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS || "1");
+  if (q.thread.followUpCount >= MAX_FOLLOWUPS)
+    throw new Apierror(400, `Only ${MAX_FOLLOWUPS} follow-up(s) allowed per thread`);
+  
+  const unansweredFollowUp = q.thread.messages.some(
+    (m) => m.role === "asker" && m.isFollowUp &&
+    !q.thread.messages.some(
+      (m2) => m2.role === "professional" && m2.isFollowUp &&
+      m2.createdAt > m.createdAt
+    )
+  );
+  if (unansweredFollowUp)
+    throw new Apierror(400, "Please wait for the professional to answer your previous follow-up");
+
+    
+
   q.thread.messages.push({
     sender: req.user._id,
     role: "asker",
@@ -534,11 +585,12 @@ export const postFollowUp = asynchandler(async (req, res) => {
     isFollowUp: true,
   });
   q.status = "in_thread";
+  q.thread.followUpCount += 1;
   // q.timeline.push({
   //   at: new Date(),
   //   status: "in_thread",
   //   by: req.user._id,
-  //   note: "Follow-up question asked.",
+  //   note: `Follow-up question #${q.thread.followUpCount} asked.`,
   // });
   await q.save();
   notifyStatusChange(q, "in_thread").catch(() => {});
@@ -581,153 +633,6 @@ export const answerFollowUp = asynchandler(async (req, res) => {
     .status(200)
     .json(new Apiresponse(200, q, "Follow-up answer posted"));
 });
-
-// original code 
-// export const closeThreadAndPayout = asynchandler(async (req, res) => {
-//   const { id } = req.params;
-//   const { body } = req.body;
-//   console.log("ye puri body ha",req.body)
-//   console.log(body);
-//   const q = await Question.findById(id).populate("professional");
-//   if (!q) throw new Apierror(404, "Question not found");
-//   if (q.status === "closed") throw new Apierror(400, "Already closed");
-//   if (!q.payment.paid) throw new Apierror(400, "Not paid");
-//   if (String(q.professional._id) !== String(req.user.professional._id))
-//     throw new Apierror(403, "Not professional");
-
-//   const now = new Date();
-//   let totalFeePercent = PLATFORM_FEE_PERCENT;
-//   let penalty = false;
-//   if (now < q.thread.followUpWindowExpiresAt) {
-//     totalFeePercent += EARLY_CLOSE_PENALTY_PERCENT;
-//     q.thread.threadClosedEarlier = true;
-//     penalty = true;
-//   }
-//   const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
-//   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
-
-//   q.status = "closed";
-//   q.thread.closedAt = now;
-//   q.timeline.push({
-//     at: new Date(),
-//     status: "closed",
-//     by: req.user._id,
-//     note: "Thread closed by professional. " + (body ? `Note: ${body}` : ""),
-//   });
-
-//   await q.save();
-
-//   // Attempt payout if stripe account exists; otherwise store pending payout.
-//   if (q.professional.professionalStripeId) {
-//     try {
-//       // retrieve account and check payouts/capabilities before attempting transfer
-//       const account = await stripe.accounts.retrieve(
-//         q.professional.professionalStripeId
-//       );
-
-//       const payoutsEnabled = !!account.payouts_enabled;
-//       const transfersActive = account.capabilities?.transfers === "active";
-
-//       if (payoutsEnabled && transfersActive) {
-//         try {
-//           await stripe.transfers.create({
-//             amount: Math.round(payoutAmount * 100),
-//             currency: "usd",
-//             destination: q.professional.professionalStripeId,
-//             metadata: { questionId: q._id.toString() },
-//           });
-//           console.log(
-//             `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
-//           );
-
-//           try {
-//             const invoice = await createPayoutSentInvoice(q, payoutAmount, transfer.id, penalty);
-//             if (invoice) {
-//               q.payoutInvoiceId = invoice._id;
-//               await q.save();
-//             }
-//           } catch (invErr) {
-//             console.error("Failed to create payout-sent invoice:", invErr);
-//           }
-
-//         } catch (txErr) {
-//           // transfer failed -> fallback to pendingPayouts
-//           console.error(
-//             `Stripe transfer failed for question ${q._id}, saving to pendingPayouts:`,
-//             txErr
-//           );
-//           await Professional.findByIdAndUpdate(q.professional._id, {
-//             $push: {
-//               pendingPayouts: {
-//                 amount: payoutAmount,
-//                 questionId: q._id,
-//                 timestamp: new Date(),
-//                 paid: false,
-//               },
-//             },
-//           });
-//         }
-//       } else {
-//         // account not ready for payouts -> store pending payout instead of throwing
-//         console.log(
-//           `Stripe account ${q.professional.professionalStripeId} not ready (payoutsEnabled=${payoutsEnabled}, transfersActive=${transfersActive}). Saving payout to pendingPayouts.`
-//         );
-//         await Professional.findByIdAndUpdate(q.professional._id, {
-//           $push: {
-//             pendingPayouts: {
-//               amount: payoutAmount,
-//               questionId: q._id,
-//               timestamp: new Date(),
-//               paid: false,
-//             },
-//           },
-//         });
-//       }
-//     } catch (accErr) {
-//       // failed to retrieve account or other stripe error -> fallback to pendingPayouts
-//       console.error(
-//         `Error checking Stripe account for professional ${q.professional._id}. Saving payout to pendingPayouts.`,
-//         accErr
-//       );
-//       await Professional.findByIdAndUpdate(q.professional._id, {
-//         $push: {
-//           pendingPayouts: {
-//             amount: payoutAmount,
-//             questionId: q._id,
-//             timestamp: new Date(),
-//             paid: false,
-//           },
-//         },
-//       });
-//     }
-//   } else {
-//     // no stripe id -> store pending payout
-//     await Professional.findByIdAndUpdate(q.professional._id, {
-//       $push: {
-//         pendingPayouts: {
-//           amount: payoutAmount,
-//           questionId: q._id,
-//           timestamp: new Date(),
-//           paid: false,
-//         },
-//       },
-//     });
-//   }
-
-//   notifyStatusChange(q, "closed", body).catch(() => {});
-//   return res
-//     .status(200)
-//     .json(
-//       new Apiresponse(
-//         200,
-//         q,
-//         penalty
-//           ? "Thread closed early, payout deducted"
-//           : "Thread closed and payout sent"
-//       )
-//     );
-// });
-
 
 
 export const closeThreadAndPayout = asynchandler(async (req, res) => {

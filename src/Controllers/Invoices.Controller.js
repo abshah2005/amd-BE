@@ -3,11 +3,7 @@ import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
 
-/**
- * GET /invoices
- * Returns invoices for the authenticated user (asker or professional).
- * Admins see all invoices.
- */
+
 export const listInvoices = asynchandler(async (req, res) => {
   const { page = 1, limit = 20, type } = req.query;
 
