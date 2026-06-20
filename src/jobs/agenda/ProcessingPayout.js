@@ -1,4 +1,3 @@
-import agenda from "./AgendaInstance.js";
 import Stripe from "stripe";
 import { Professional } from "../../models/Professional.model.js";
 import { Question } from "../../models/Question.model.js";
@@ -9,7 +8,7 @@ import {
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-agenda.define("process_pending_payouts", async (job) => {
+export const processPendingPayouts = async () => {
   const professionals = await Professional.find({
     professionalStripeId: { $exists: true, $ne: null },
     pendingPayouts: { $elemMatch: { paid: false } },
@@ -140,4 +139,4 @@ agenda.define("process_pending_payouts", async (job) => {
 
     await professional.save();
   }
-});
+};
