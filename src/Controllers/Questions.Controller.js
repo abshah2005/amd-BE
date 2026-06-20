@@ -7,7 +7,8 @@ import { Apierror } from "../utils/Apierror.js";
 import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
-import { createPaymentReceivedInvoice, createPayoutSentInvoice, createPayoutPendingInvoice } from "../services/Invoice.service.js";
+import { createPaymentReceivedInvoice } from "../services/Invoice.service.js";
+import { executePayout } from "../services/Payout.service.js";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
 import { Asker } from "../models/Asker.model.js";
 import { Admin } from "../models/Admin.model.js";
@@ -458,9 +459,9 @@ export const postAnswer = asynchandler(async (req, res) => {
   const { body } = req.body;
   let attachmentsList = [];
 
-  const q = await Question.findById(id);
+  const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
-  if (String(q.professional) !== String(req.user.professional._id))
+  if (String(q.professional._id) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
 
   if (req.files?.attachments) {
@@ -491,6 +492,20 @@ export const postAnswer = asynchandler(async (req, res) => {
     await q.save();
     notifyStatusChange(q, "answered").catch(() => {});
     return res.status(200).json(new Apiresponse(200, q, "Answer posted successfully"));
+
+  } else if (q.status === "answered") {
+    // Professional appending a supplemental message after their initial answer,
+    // before the asker has posted a follow-up. Status and follow-up window stay unchanged.
+    q.thread.messages.push({
+      sender: req.user._id,
+      role: "professional",
+      body,
+      attachments: attachmentsList,
+      isFollowUp: false,
+    });
+    await q.save();
+    notifyStatusChange(q, "answered").catch(() => {});
+    return res.status(200).json(new Apiresponse(200, q, "Supplemental answer posted"));
 
   } else if (q.status === "in_thread") {
     // Follow-up answer
@@ -528,6 +543,13 @@ export const postAnswer = asynchandler(async (req, res) => {
       });
       await q.save();
       notifyStatusChange(q, "closed").catch(() => {});
+
+      // Professional fulfilled all obligations: pay out at the standard fee, no penalty
+      const payoutAmount = Math.round(q.priceUSD * (1 - PLATFORM_FEE_PERCENT / 100));
+      executePayout(q, payoutAmount, false).catch((err) =>
+        console.error(`[postAnswer] Payout failed for exhausted thread ${q._id}:`, err)
+      );
+
       return res.status(200).json(new Apiresponse(200, q, "Follow-up answered and thread closed"));
     } else {
       // More follow-ups still available
@@ -638,8 +660,7 @@ export const answerFollowUp = asynchandler(async (req, res) => {
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
-  console.log("ye puri body ha",req.body)
-  console.log(body);
+
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (q.status === "closed") throw new Apierror(400, "Already closed");
@@ -648,202 +669,35 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     throw new Apierror(403, "Not professional");
 
   const now = new Date();
-  let totalFeePercent = PLATFORM_FEE_PERCENT;
-  let penalty = false;
-  if (now < q.thread.followUpWindowExpiresAt) {
-    totalFeePercent += EARLY_CLOSE_PENALTY_PERCENT;
+  let earlyClose = false;
+  if (q.thread.followUpWindowExpiresAt && now < q.thread.followUpWindowExpiresAt) {
     q.thread.threadClosedEarlier = true;
-    penalty = true;
+    earlyClose = true;
   }
-  const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
-  console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
+
+  const TOTAL_FEE = PLATFORM_FEE_PERCENT + (earlyClose ? EARLY_CLOSE_PENALTY_PERCENT : 0);
+  const payoutAmount = Math.round(q.priceUSD * (1 - TOTAL_FEE / 100));
 
   q.status = "closed";
   q.thread.closedAt = now;
   q.timeline.push({
-    at: new Date(),
+    at: now,
     status: "closed",
     by: req.user._id,
-    note: "Thread closed by professional. " + (body ? `Note: ${body}` : ""),
+    note: "Thread closed by professional." + (body ? ` Note: ${body}` : ""),
   });
-
   await q.save();
 
-  // Attempt payout if stripe account exists; otherwise store pending payout.
-  if (q.professional.professionalStripeId) {
-    try {
-      // retrieve account and check payouts/capabilities before attempting transfer
-      const account = await stripe.accounts.retrieve(
-        q.professional.professionalStripeId
-      );
-
-      const payoutsEnabled = !!account.payouts_enabled;
-      const transfersActive = account.capabilities?.transfers === "active";
-
-      if (payoutsEnabled && transfersActive) {
-        try {
-          const transfer = await stripe.transfers.create({
-            amount: Math.round(payoutAmount * 100),
-            currency: "usd",
-            destination: q.professional.professionalStripeId,
-            metadata: { questionId: q._id.toString() },
-          });
-          
-          console.log(
-            `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
-          );
-
-          // Create payout-sent invoice
-          try {
-            const invoice = await createPayoutSentInvoice(q, payoutAmount, transfer.id, penalty);
-            if (invoice) {
-              q.payoutInvoiceId = invoice._id;
-              await q.save();
-            }
-          } catch (invErr) {
-            console.error("Failed to create payout-sent invoice:", invErr);
-          }
-        } catch (txErr) {
-          // transfer failed -> fallback to pendingPayouts + create pending invoice
-          console.error(
-            `Stripe transfer failed for question ${q._id}, saving to pendingPayouts:`,
-            txErr
-          );
-
-          try {
-            const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
-            await Professional.findByIdAndUpdate(q.professional._id, {
-              $push: {
-                pendingPayouts: {
-                  amount: payoutAmount,
-                  questionId: q._id,
-                  timestamp: new Date(),
-                  paid: false,
-                  invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
-                },
-              },
-            });
-          } catch (pushErr) {
-            console.error("Failed to create pending payout invoice or update professional:", pushErr);
-            await Professional.findByIdAndUpdate(q.professional._id, {
-              $push: {
-                pendingPayouts: {
-                  amount: payoutAmount,
-                  questionId: q._id,
-                  timestamp: new Date(),
-                  paid: false,
-                },
-              },
-            });
-          }
-        }
-      } else {
-        // account not ready for payouts -> store pending payout + invoice
-        console.log(
-          `Stripe account ${q.professional.professionalStripeId} not ready (payoutsEnabled=${payoutsEnabled}, transfersActive=${transfersActive}). Saving payout to pendingPayouts.`
-        );
-        try {
-          const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
-          await Professional.findByIdAndUpdate(q.professional._id, {
-            $push: {
-              pendingPayouts: {
-                amount: payoutAmount,
-                questionId: q._id,
-                timestamp: new Date(),
-                paid: false,
-                invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
-              },
-            },
-          });
-        } catch (pushErr) {
-          console.error("Failed to create pending payout invoice or update professional:", pushErr);
-          await Professional.findByIdAndUpdate(q.professional._id, {
-            $push: {
-              pendingPayouts: {
-                amount: payoutAmount,
-                questionId: q._id,
-                timestamp: new Date(),
-                paid: false,
-              },
-            },
-          });
-        }
-      }
-    } catch (accErr) {
-      // failed to retrieve account or other stripe error -> fallback to pendingPayouts + invoice
-      console.error(
-        `Error checking Stripe account for professional ${q.professional._id}. Saving payout to pendingPayouts.`,
-        accErr
-      );
-      try {
-        const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
-        await Professional.findByIdAndUpdate(q.professional._id, {
-          $push: {
-            pendingPayouts: {
-              amount: payoutAmount,
-              questionId: q._id,
-              timestamp: new Date(),
-              paid: false,
-              invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
-            },
-          },
-        });
-      } catch (pushErr) {
-        console.error("Failed to create pending payout invoice or update professional:", pushErr);
-        await Professional.findByIdAndUpdate(q.professional._id, {
-          $push: {
-            pendingPayouts: {
-              amount: payoutAmount,
-              questionId: q._id,
-              timestamp: new Date(),
-              paid: false,
-            },
-          },
-        });
-      }
-    }
-  } else {
-    // no stripe id -> create pending invoice and store pending payout
-    try {
-      const pendingInvoice = await createPayoutPendingInvoice(q, payoutAmount, penalty);
-      await Professional.findByIdAndUpdate(q.professional._id, {
-        $push: {
-          pendingPayouts: {
-            amount: payoutAmount,
-            questionId: q._id,
-            timestamp: new Date(),
-            paid: false,
-            invoiceId: pendingInvoice ? pendingInvoice._id : undefined,
-          },
-        },
-      });
-    } catch (pushErr) {
-      console.error("Failed to create pending payout invoice or update professional:", pushErr);
-      await Professional.findByIdAndUpdate(q.professional._id, {
-        $push: {
-          pendingPayouts: {
-            amount: payoutAmount,
-            questionId: q._id,
-            timestamp: new Date(),
-            paid: false,
-          },
-        },
-      });
-    }
-  }
+  await executePayout(q, payoutAmount, earlyClose);
 
   notifyStatusChange(q, "closed", body).catch(() => {});
-  return res
-    .status(200)
-    .json(
-      new Apiresponse(
-        200,
-        q,
-        penalty
-          ? "Thread closed early, payout deducted"
-          : "Thread closed and payout sent"
-      )
-    );
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      q,
+      earlyClose ? "Thread closed early, payout deducted" : "Thread closed and payout sent"
+    )
+  );
 });
 
 

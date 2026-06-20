@@ -1,7 +1,7 @@
 import agenda from "./AgendaInstance.js";
 import Stripe from "stripe";
 import { Professional } from "../../models/Professional.model.js";
-import Question from "../../models/Question.model.js";
+import { Question } from "../../models/Question.model.js";
 import {
   createPayoutSentInvoice,
   createPayoutPendingInvoice,
@@ -12,93 +12,132 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 agenda.define("process_pending_payouts", async (job) => {
   const professionals = await Professional.find({
     professionalStripeId: { $exists: true, $ne: null },
-    pendingPayouts: { $elemMatch: { paid: false } }
+    pendingPayouts: { $elemMatch: { paid: false } },
   });
-  
-  console.log(`Found ${professionals.length} professionals with pending payouts to process`);
-  
+
+  console.log(
+    `[process_pending_payouts] Found ${professionals.length} professional(s) with pending payouts.`
+  );
+
   for (const professional of professionals) {
-    // Check account status before attempting transfers
+    // Verify the Stripe account is ready before attempting any transfers
+    let account;
     try {
-      const account = await stripe.accounts.retrieve(professional.professionalStripeId);
-      
-      if (!account.payouts_enabled) {
-        console.log(`Professional ${professional._id} has pending payouts but Stripe account is not ready for payouts`);
-        continue; // Skip this professional and check again later
-      }
-      
-      const pendingPayouts = professional.pendingPayouts.filter(p => !p.paid);
-      console.log(`Processing ${pendingPayouts.length} pending payouts for ${professional._id}`);
-      
-      for (const payout of pendingPayouts) {
-        try {
-          // load question for invoice context
-          const question = await Question.findById(payout.questionId).populate("professional");
-          const earlyClose = !!(question && question.thread && question.thread.threadClosedEarlier);
+      account = await stripe.accounts.retrieve(professional.professionalStripeId);
+    } catch (err) {
+      console.error(
+        `[process_pending_payouts] Could not retrieve Stripe account for professional ${professional._id}:`,
+        err
+      );
+      continue;
+    }
 
-          const transfer = await stripe.transfers.create({
-            amount: Math.round(payout.amount * 100),
-            currency: "usd",
-            destination: professional.professionalStripeId,
-            metadata: { 
-              questionId: payout.questionId.toString(),
-              processedAt: new Date().toISOString()
-            }
-          });
+    if (!account.payouts_enabled) {
+      console.log(
+        `[process_pending_payouts] Professional ${professional._id} Stripe account not yet ready for payouts. Skipping.`
+      );
+      continue;
+    }
 
-          // Mark as paid and record transfer info
-          payout.paid = true;
-          payout.processedAt = new Date();
-          payout.transferId = transfer.id;
+    const pendingPayouts = professional.pendingPayouts.filter((p) => !p.paid);
+    console.log(
+      `[process_pending_payouts] Processing ${pendingPayouts.length} pending payout(s) for professional ${professional._id}.`
+    );
 
-          // Create payout-sent invoice (best-effort)
+    for (const payout of pendingPayouts) {
+      try {
+        const transfer = await stripe.transfers.create({
+          amount: Math.round(payout.amount * 100),
+          currency: "usd",
+          destination: professional.professionalStripeId,
+          metadata: {
+            questionId: payout.questionId.toString(),
+            processedAt: new Date().toISOString(),
+          },
+        });
+
+        // Mark payout as paid and record transfer details (all fields now in schema)
+        payout.paid = true;
+        payout.processedAt = new Date();
+        payout.transferId = transfer.id;
+
+        // Create payout-sent invoice (best-effort — don't let failure block the payout mark)
+        // Only create if there isn't already a sent invoice on this payout
+        if (!payout.invoiceId) {
           try {
+            const question = await Question.findById(payout.questionId).populate("professional");
             if (question) {
-              const invoice = await createPayoutSentInvoice(question, payout.amount, transfer.id, earlyClose);
-              if (invoice && invoice._id) {
+              const earlyClose = !!(
+                question.thread && question.thread.threadClosedEarlier
+              );
+              const invoice = await createPayoutSentInvoice(
+                question,
+                payout.amount,
+                transfer.id,
+                earlyClose
+              );
+              if (invoice?._id) {
                 payout.invoiceId = invoice._id;
-                // also link invoice on question if desired
                 try {
                   question.payoutInvoiceId = invoice._id;
                   await question.save();
                 } catch (qErr) {
-                  console.error(`Failed to attach payout invoice to question ${question._id}:`, qErr);
+                  console.error(
+                    `[process_pending_payouts] Failed to link payout invoice on question ${question._id}:`,
+                    qErr
+                  );
                 }
               }
             } else {
-              console.log(`Question ${payout.questionId} not found; skipping invoice creation`);
+              console.log(
+                `[process_pending_payouts] Question ${payout.questionId} not found; skipping invoice creation.`
+              );
             }
           } catch (invErr) {
-            console.error(`Failed to create payout-sent invoice for question ${payout.questionId}:`, invErr);
+            console.error(
+              `[process_pending_payouts] createPayoutSentInvoice failed for question ${payout.questionId}:`,
+              invErr
+            );
           }
+        }
+      } catch (txErr) {
+        console.error(
+          `[process_pending_payouts] Transfer failed for question ${payout.questionId}:`,
+          txErr
+        );
 
-        } catch (err) {
-          console.error(`Failed to process payout for question ${payout.questionId}:`, err);
-
-          // On transfer failure, create a pending payout invoice if possible
+        // Only create a pending invoice if one was never created (avoids duplicates on retries)
+        if (!payout.invoiceId) {
           try {
             const question = await Question.findById(payout.questionId).populate("professional");
-            const earlyClose = !!(question && question.thread && question.thread.threadClosedEarlier);
             if (question) {
-              const pendingInvoice = await createPayoutPendingInvoice(question, payout.amount, earlyClose);
-              if (pendingInvoice && pendingInvoice._id) {
+              const earlyClose = !!(
+                question.thread && question.thread.threadClosedEarlier
+              );
+              const pendingInvoice = await createPayoutPendingInvoice(
+                question,
+                payout.amount,
+                earlyClose
+              );
+              if (pendingInvoice?._id) {
                 payout.invoiceId = pendingInvoice._id;
               }
             } else {
-              console.log(`Question ${payout.questionId} not found; could not create pending invoice`);
+              console.log(
+                `[process_pending_payouts] Question ${payout.questionId} not found; skipping pending invoice.`
+              );
             }
           } catch (invErr) {
-            console.error(`Failed to create pending payout invoice for question ${payout.questionId}:`, invErr);
+            console.error(
+              `[process_pending_payouts] createPayoutPendingInvoice failed for question ${payout.questionId}:`,
+              invErr
+            );
           }
-
-          // keep payout.paid = false so it remains pending
         }
+        // payout.paid remains false — will be retried on next job run
       }
-      
-      await professional.save();
-      
-    } catch (err) {
-      console.error(`Error checking Stripe account for professional ${professional._id}:`, err);
     }
+
+    await professional.save();
   }
 });
