@@ -4,6 +4,7 @@ import { Question } from "../../models/Question.model.js";
 import {
   createPayoutSentInvoice,
   createPayoutPendingInvoice,
+  upgradePendingToSentInvoice,
 } from "../../services/Invoice.service.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -60,44 +61,49 @@ export const processPendingPayouts = async () => {
         payout.processedAt = new Date();
         payout.transferId = transfer.id;
 
-        // Create payout-sent invoice (best-effort — don't let failure block the payout mark)
-        // Only create if there isn't already a sent invoice on this payout
-        if (!payout.invoiceId) {
-          try {
-            const question = await Question.findById(payout.questionId).populate("professional");
-            if (question) {
-              const earlyClose = !!(
-                question.thread && question.thread.threadClosedEarlier
-              );
+        // Create / upgrade payout-sent invoice (best-effort — don't block the payout mark)
+        try {
+          const question = await Question.findById(payout.questionId).populate("professional");
+          if (question) {
+            const earlyClose = !!(question.thread && question.thread.threadClosedEarlier);
+            let invoiceId = null;
+
+            if (payout.invoiceId) {
+              // A payout_pending invoice exists from a prior failed attempt — upgrade it
+              const upgraded = await upgradePendingToSentInvoice(payout.invoiceId, transfer.id, question);
+              invoiceId = upgraded?._id || payout.invoiceId;
+            } else {
               const invoice = await createPayoutSentInvoice(
                 question,
                 payout.amount,
                 transfer.id,
                 earlyClose
               );
-              if (invoice?._id) {
-                payout.invoiceId = invoice._id;
-                try {
-                  question.payoutInvoiceId = invoice._id;
-                  await question.save();
-                } catch (qErr) {
-                  console.error(
-                    `[process_pending_payouts] Failed to link payout invoice on question ${question._id}:`,
-                    qErr
-                  );
-                }
-              }
-            } else {
-              console.log(
-                `[process_pending_payouts] Question ${payout.questionId} not found; skipping invoice creation.`
-              );
+              invoiceId = invoice?._id || null;
             }
-          } catch (invErr) {
-            console.error(
-              `[process_pending_payouts] createPayoutSentInvoice failed for question ${payout.questionId}:`,
-              invErr
+
+            if (invoiceId) {
+              payout.invoiceId = invoiceId;
+              try {
+                question.payoutInvoiceId = invoiceId;
+                await question.save();
+              } catch (qErr) {
+                console.error(
+                  `[process_pending_payouts] Failed to link payout invoice on question ${question._id}:`,
+                  qErr
+                );
+              }
+            }
+          } else {
+            console.log(
+              `[process_pending_payouts] Question ${payout.questionId} not found; skipping invoice creation.`
             );
           }
+        } catch (invErr) {
+          console.error(
+            `[process_pending_payouts] Invoice update failed for question ${payout.questionId}:`,
+            invErr
+          );
         }
       } catch (txErr) {
         console.error(

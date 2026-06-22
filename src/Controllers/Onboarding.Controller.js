@@ -1,8 +1,10 @@
 import Stripe from "stripe";
 import { Professional } from "../models/Professional.model.js";
+import { Question } from "../models/Question.model.js";
 import { asynchandler } from "../utils/Asynchandler.js";
 import { Apierror } from "../utils/Apierror.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
+import { upgradePendingToSentInvoice } from "../services/Invoice.service.js";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const getOnboardingStatus = async (req, res) => {
@@ -126,11 +128,25 @@ export const processBacklogPayments = asynchandler(async (req, res) => {
         },
       });
 
-      // Mark as paid with metadata for audit
       payout.paid = true;
-      payout.paidAt = new Date();
-      payout.stripeTransferId = transfer.id;
+      payout.processedAt = new Date();
+      payout.transferId = transfer.id;
       processedPayouts.push(payout);
+
+      // Upgrade the payout_pending invoice to payout_sent (best-effort)
+      if (payout.invoiceId) {
+        try {
+          const question = await Question.findById(payout.questionId)
+            .select("title professional payment priceUSD")
+            .lean();
+          await upgradePendingToSentInvoice(payout.invoiceId, transfer.id, question);
+        } catch (invErr) {
+          console.error(
+            `[processBacklogPayments] Invoice upgrade failed for payout ${payout._id}:`,
+            invErr
+          );
+        }
+      }
     } catch (err) {
       console.error(
         `Failed to process payout for question ${payout.questionId}:`,

@@ -146,16 +146,28 @@ const listProfessionals = asynchandler(async (req, res) => {
     nameRegex = new RegExp(String(name).trim(), "i");
   }
 
-  // tags: comma separated -> require all selected tags to be present
+  // tags: comma separated -> require all selected tags to be present (case + space insensitive)
+  const buildTagRegex = (t) => {
+    // strip ALL spaces from search term, then allow \s* between every character
+    // so "ailover", "ai lover", "AI Lover" all match each other
+    const stripped = t.trim().toLowerCase().replace(/\s+/g, "");
+    const escaped = stripped.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`^${escaped.split("").join("\\s*")}$`, "i");
+  };
+
   if (req.query.tags) {
     const tagsArr = String(req.query.tags)
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-    if (tagsArr.length) matchClauses.push({ tags: { $all: tagsArr } });
+    if (tagsArr.length) {
+      tagsArr.forEach((t) => {
+        matchClauses.push({ tags: { $elemMatch: { $regex: buildTagRegex(t) } } });
+      });
+    }
   } else if (tag) {
     // backward-compat single tag param
-    matchClauses.push({ tags: String(tag) });
+    matchClauses.push({ tags: { $elemMatch: { $regex: buildTagRegex(String(tag)) } } });
   }
 
   if (country || req.query.country) {

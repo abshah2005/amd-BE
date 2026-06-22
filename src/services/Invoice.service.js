@@ -125,7 +125,6 @@ export async function createPayoutSentInvoice(question, payoutAmount, stripeTran
     const { pro, user } = await resolveProfessionalUser(question);
 
     const subtotal = question.priceUSD || 0;
-    const totalFeePercent = PLATFORM_FEE_PERCENT + (earlyClose ? EARLY_CLOSE_PENALTY_PERCENT : 0);
     const platformFeeAmount = Math.round(subtotal * (PLATFORM_FEE_PERCENT / 100) * 100) / 100;
     const penaltyAmount = earlyClose
       ? Math.round(subtotal * (EARLY_CLOSE_PENALTY_PERCENT / 100) * 100) / 100
@@ -250,10 +249,51 @@ export async function createPayoutPendingInvoice(question, payoutAmount, earlyCl
   }
 }
 
+
+export async function upgradePendingToSentInvoice(invoiceId, transferId, question) {
+  try {
+    const invoice = await Invoice.findById(invoiceId);
+    if (!invoice || invoice.type !== "payout_pending") return null;
+
+    invoice.type = "payout_sent";
+    invoice.stripeTransferId = transferId;
+    invoice.notes = invoice.notes
+      ? invoice.notes.replace("will be transferred when Stripe account is ready", `transferred via ${transferId}`)
+      : `Payout sent for question: "${question?.title}" — transferred via ${transferId}`;
+
+    await invoice.save();
+
+    // Non-blocking email notifying professional the pending payout was now sent
+    try {
+      const { user } = await resolveProfessionalUser(question);
+      const html = payoutSentTemplate({
+        logoUrl: process.env.APP_LOGO_URL,
+        proName: user ? `${user.firstName || ""} ${user.lastName || ""}`.trim() : "Professional",
+        invoiceNumber: String(invoice._id).slice(-8),
+        invoiceDate: new Date().toLocaleDateString(),
+        questionTitle: question?.title,
+        payoutAmountUSD: invoice.amounts.total,
+        transferId,
+        invoiceUrl: buildPublicInvoiceUrl(invoice.publicToken),
+        supportEmail: process.env.SUPPORT_EMAIL,
+      });
+      const subject = `AskMeDirect — Payout processed (${formatUSD(invoice.amounts.total)})`;
+      sendInvoiceEmail(user?.email || process.env.SUPPORT_EMAIL, subject, html);
+    } catch (mailErr) {
+      console.error("[InvoiceService] upgradePendingToSent email prep failed:", mailErr);
+    }
+
+    return invoice;
+  } catch (err) {
+    console.error("[InvoiceService] upgradePendingToSentInvoice failed:", err);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helper: build the public invoice URL
 // ---------------------------------------------------------------------------
 export function buildPublicInvoiceUrl(publicToken) {
-  const base = process.env.APP_BASE_URL || "https://yourapp.com";
+  const base = process.env.FRONTEND_URL || "https://yourapp.com";
   return `${base}/invoices/view/${publicToken}`;
 }
