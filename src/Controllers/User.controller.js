@@ -718,7 +718,7 @@ const testSendEmail = asynchandler(async (req, res) => {
     req.body?.html ||
     `<div style="font-family: Arial, sans-serif;">
        <h3>AskMeDirect — Test Email</h3>
-       <p>This is a test email sent from the server to verify email delivery.</p>
+       <p>This is a test email ${'http://localhost:5173/resetPassword?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2YTIzMTM0ZWM0ODlmZjgxMTFjOTQ3NWMiLCJpYXQiOjE3ODE5NzQwNDksImV4cCI6MTc4MTk3NzY0OX0.b8I0DYpKyDfE-RYUtEgjTxc0jUYAIOLecufaA_o_4Bg'} sent from the server to verify email delivery.</p>
        <p>If you received this, the email system is working.</p>
      </div>`;
 
