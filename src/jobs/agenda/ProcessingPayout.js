@@ -6,6 +6,7 @@ import {
   createPayoutPendingInvoice,
   upgradePendingToSentInvoice,
 } from "../../services/Invoice.service.js";
+import { SUPPORTED_STRIPE_CURRENCIES } from "../../constants.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -39,31 +40,53 @@ export const processPendingPayouts = async () => {
       continue;
     }
 
+    const accountCurrency = account.default_currency?.toLowerCase();
+    if (!accountCurrency || !SUPPORTED_STRIPE_CURRENCIES.has(accountCurrency)) {
+      console.log(
+        `[process_pending_payouts] Professional ${professional._id} has unsupported settlement currency (${accountCurrency?.toUpperCase() ?? "unknown"}). Skipping.`
+      );
+      continue;
+    }
+
     const pendingPayouts = professional.pendingPayouts.filter((p) => !p.paid);
     console.log(
       `[process_pending_payouts] Processing ${pendingPayouts.length} pending payout(s) for professional ${professional._id}.`
     );
 
     for (const payout of pendingPayouts) {
+      // Load question before the transfer — needed for paidCurrency and invoice creation
+      const question = await Question.findById(payout.questionId).populate("professional");
+
       try {
+        // Transfer in the same currency the client paid in. Stripe holds each payment
+        // currency in a separate balance bucket — the transfer must debit from the bucket
+        // that actually has funds. Stripe then auto-converts to the connected account's
+        // settlement currency if they differ.
+        const paidCurrency = question?.payment?.paidCurrency?.toLowerCase() || "usd";
+        const grossPaid = question?.payment?.paidAmount || payout.amount;
+        const grossUSD = question?.payment?.amountUSD || question?.priceUSD || payout.amount;
+        const feeRatio = grossUSD > 0 ? payout.amount / grossUSD : 1;
+        const stripeAmount = Math.round(grossPaid * feeRatio * 100);
+
         const transfer = await stripe.transfers.create({
-          amount: Math.round(payout.amount * 100),
-          currency: "usd",
+          amount: stripeAmount,
+          currency: paidCurrency,
           destination: professional.professionalStripeId,
           metadata: {
             questionId: payout.questionId.toString(),
             processedAt: new Date().toISOString(),
+            usdAmount: payout.amount.toString(),
+            paidCurrency,
           },
         });
 
-        // Mark payout as paid and record transfer details (all fields now in schema)
+        // Mark payout as paid and record transfer details
         payout.paid = true;
         payout.processedAt = new Date();
         payout.transferId = transfer.id;
 
         // Create / upgrade payout-sent invoice (best-effort — don't block the payout mark)
         try {
-          const question = await Question.findById(payout.questionId).populate("professional");
           if (question) {
             const earlyClose = !!(question.thread && question.thread.threadClosedEarlier);
             let invoiceId = null;
@@ -114,11 +137,8 @@ export const processPendingPayouts = async () => {
         // Only create a pending invoice if one was never created (avoids duplicates on retries)
         if (!payout.invoiceId) {
           try {
-            const question = await Question.findById(payout.questionId).populate("professional");
             if (question) {
-              const earlyClose = !!(
-                question.thread && question.thread.threadClosedEarlier
-              );
+              const earlyClose = !!(question.thread && question.thread.threadClosedEarlier);
               const pendingInvoice = await createPayoutPendingInvoice(
                 question,
                 payout.amount,

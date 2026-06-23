@@ -5,6 +5,7 @@ import { asynchandler } from "../utils/Asynchandler.js";
 import { Apierror } from "../utils/Apierror.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { upgradePendingToSentInvoice } from "../services/Invoice.service.js";
+import { SUPPORTED_STRIPE_CURRENCIES, COUNTRY_TO_CURRENCY } from "../constants.js";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const getOnboardingStatus = async (req, res) => {
@@ -111,20 +112,53 @@ export const processBacklogPayments = asynchandler(async (req, res) => {
     );
   }
 
+  const accountCurrency = account.default_currency?.toLowerCase();
+  if (!accountCurrency || !SUPPORTED_STRIPE_CURRENCIES.has(accountCurrency)) {
+    return res.status(400).json(
+      new Apiresponse(
+        400,
+        {
+          processed: [],
+          failed: [],
+          stripeAccountStatus: {
+            ready: false,
+            accountId: professional.professionalStripeId,
+            currency: accountCurrency,
+          },
+        },
+        `Payouts are not supported for the account's settlement currency (${accountCurrency?.toUpperCase() ?? "unknown"}). Please contact support.`
+      )
+    );
+  }
+
   // Account ready -> attempt to process pending payouts
   const pendingPayouts = professional.pendingPayouts || [];
   const processedPayouts = [];
   const failedPayouts = [];
 
   for (const payout of pendingPayouts.filter((p) => !p.paid)) {
+    const question = await Question.findById(payout.questionId);
+
     try {
+      // Transfer in the same currency the client paid in. Stripe holds each payment
+      // currency in a separate balance bucket — the transfer must debit from the bucket
+      // that actually has funds. Stripe then auto-converts to the connected account's
+      // settlement currency if they differ.
+      const paidCurrency = question?.payment?.paidCurrency?.toLowerCase() || "usd";
+      const grossPaid = question?.payment?.paidAmount || payout.amount;
+      const grossUSD = question?.payment?.amountUSD || question?.priceUSD || payout.amount;
+      const feeRatio = grossUSD > 0 ? payout.amount / grossUSD : 1;
+      const stripeAmount = Math.round(grossPaid * feeRatio * 100);
+
       const transfer = await stripe.transfers.create({
-        amount: Math.round(payout.amount * 100),
-        currency: "usd",
+        amount: stripeAmount,
+        currency: paidCurrency,
         destination: professional.professionalStripeId,
         metadata: {
           questionId: payout.questionId?.toString?.(),
           processingDate: new Date().toISOString(),
+          usdAmount: payout.amount.toString(),
+          paidCurrency,
         },
       });
 
@@ -183,7 +217,16 @@ export const processBacklogPayments = asynchandler(async (req, res) => {
 
 export const onboardProfessionalToStripe = async (req, res) => {
   try {
-    const { professionalId,country = "GB" } = req.body;
+    const { professionalId, country = "GB" } = req.body;
+
+    const countryUpper = country.toUpperCase();
+    const settlementCurrency = COUNTRY_TO_CURRENCY[countryUpper];
+    if (!settlementCurrency) {
+      return res.status(400).json({
+        message: `Stripe onboarding is not available in your region (${country}). Supported regions settle in: ${[...SUPPORTED_STRIPE_CURRENCIES].map(c => c.toUpperCase()).join(", ")}.`,
+      });
+    }
+
     const professional = await Professional.findById(professionalId).populate(
       "user"
     );

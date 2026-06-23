@@ -94,18 +94,31 @@ export async function executePayout(question, payoutAmount, earlyClose = false) 
 
   // Attempt the transfer
   try {
+    // Transfer in the same currency the client paid in. Stripe holds each payment
+    // currency in a separate balance bucket — the transfer must debit from the bucket
+    // that actually has funds. Stripe then auto-converts to the connected account's
+    // settlement currency if they differ.
+    const paidCurrency = question.payment?.paidCurrency?.toLowerCase() || "usd";
+    const grossPaid = question.payment?.paidAmount || payoutAmount;
+    const grossUSD = question.payment?.amountUSD || question.priceUSD || payoutAmount;
+    const feeRatio = grossUSD > 0 ? payoutAmount / grossUSD : 1;
+    const stripeAmount = Math.round(grossPaid * feeRatio * 100);
+
     const transfer = await stripe.transfers.create({
-      amount: Math.round(payoutAmount * 100),
-      currency: "usd",
+      amount: stripeAmount,
+      currency: paidCurrency,
       destination: professional.professionalStripeId,
       metadata: {
         questionId: question._id.toString(),
         processedAt: new Date().toISOString(),
+        usdAmount: payoutAmount.toString(),
+        paidCurrency,
       },
     });
 
     console.log(
-      `[Payout] Transfer ${transfer.id} of $${payoutAmount} to professional ${professional._id} for question ${question._id}`
+      `[Payout] Transfer ${transfer.id} of ${(stripeAmount / 100).toFixed(2)} ${paidCurrency.toUpperCase()} ` +
+        `(~$${payoutAmount} USD net) to professional ${professional._id} for question ${question._id}`
     );
 
     // Best-effort invoice + question update
