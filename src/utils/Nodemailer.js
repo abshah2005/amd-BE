@@ -137,7 +137,7 @@ export const sendQuestionStatusEmail = async (options) => {
       
       <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777; text-align: center;">
         <p>If you have any questions, please contact our support team at ${
-          process.env.SUPPORT_EMAIL || "support@askmedirect.com"
+          process.env.SUPPORT_EMAIL || "admin@askmedirect.com"
         }</p>
       </div>
     </div>
@@ -447,7 +447,7 @@ export function paymentReceivedTemplate({ logoUrl, askerName, invoiceNumber, inv
       </div>
 
       <div class="foot">
-        Need help? Contact <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'support@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'support@askmedirect.com')}</a>.
+        Need help? Contact <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}</a>.
       </div>
     </div>
   </body></html>`;
@@ -502,7 +502,7 @@ export function payoutPendingTemplate({ logoUrl, proName, invoiceNumber, invoice
         </div>
       </div>
 
-      <div class="foot">Questions? <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'support@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'support@askmedirect.com')}</a></div>
+      <div class="foot">Questions? <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}</a></div>
     </div>
   </body></html>`;
 }
@@ -557,7 +557,7 @@ export function payoutSentTemplate({ logoUrl, proName, invoiceNumber, invoiceDat
         </div>
       </div>
 
-      <div class="foot">If you have questions contact <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'support@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'support@askmedirect.com')}</a></div>
+      <div class="foot">If you have questions contact <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}</a></div>
     </div>
   </body></html>`;
 }
