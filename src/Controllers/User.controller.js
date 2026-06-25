@@ -1,4 +1,4 @@
-import { uploadOnS3 } from "../utils/Fileupload.js";
+﻿import { uploadOnS3 } from "../utils/Fileupload.js";
 import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
@@ -12,7 +12,7 @@ import { Users } from "../models/Users.model.js";
 import { Professional } from "../models/Professional.model.js";
 import { Asker } from "../models/Asker.model.js";
 import { Admin } from "../models/Admin.model.js";
-import { sendEmail } from "../utils/Nodemailer.js";
+import { sendEmail, welcomeEmailTemplate } from "../utils/Nodemailer.js";
 
 dotenv.config();
 
@@ -295,6 +295,15 @@ const registerStep3 = asynchandler(async (req, res) => {
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
     updatedUser._id,
+  );
+
+  const welcomeHtml = welcomeEmailTemplate({
+    firstName: updatedUser.firstName,
+    role: updatedUser.role,
+    supportEmail: process.env.SUPPORT_EMAIL,
+  });
+  sendEmail(updatedUser.email, "Welcome to AskMeDirect!", welcomeHtml).catch((err) =>
+    console.error("[Welcome email] failed to send:", err.message)
   );
 
   return res.status(200).json(

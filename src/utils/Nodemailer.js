@@ -33,22 +33,16 @@ export const sendInvoiceEmail = (to, subject, html) => {
     );
 };
 
-function shouldSkipEmail(status, recipientType) {
-  // Define combinations of status and recipient type for which emails should be skipped
-  const skipCombinations = [
-    // Skip "Question Approved" email for professionals
-    { status: "approved", recipientType: "professional" },
-    
-    // Skip "Payment Pending" email for professionals
-    { status: "awaiting_payment", recipientType: "professional" },
-    
-    // Add more combinations here as needed
-    // { status: "status_name", recipientType: "asker_or_professional" },
-  ];
+// EMAIL_SKIP_CONFIG — set a recipient key to true to suppress that email.
+// Callers can override per-call by passing enabled: false (or enabled: true to force).
+const EMAIL_SKIP_CONFIG = {
+  approved:         { professional: true  },  // pro approved it themselves, no need to notify
+  awaiting_payment: { professional: true  },  // pro doesn't need a "payment pending" nudge
+  // submitted:     { asker: false },         // example: un-comment to re-enable
+};
 
-  return skipCombinations.some(
-    combo => combo.status === status && combo.recipientType === recipientType
-  );
+function shouldSkipEmail(status, recipientType) {
+  return EMAIL_SKIP_CONFIG[status]?.[recipientType] === true;
 }
 
 export const sendQuestionStatusEmail = async (options) => {
@@ -59,6 +53,7 @@ export const sendQuestionStatusEmail = async (options) => {
     recipient,
     customMessage,
     actionUrl,
+    enabled,  // pass true to force-send, false to force-skip, omit to use EMAIL_SKIP_CONFIG
   } = options;
 
   if (!recipient || !recipient.email) {
@@ -66,8 +61,13 @@ export const sendQuestionStatusEmail = async (options) => {
     return;
   }
 
-  if (shouldSkipEmail(status, recipientType)) {
-    console.log(`Skipping email for status: ${status} and recipient: ${recipientType}`);
+  if (enabled === false) {
+    console.log(`[Email] force-skipped — status: ${status}, recipient: ${recipientType}`);
+    return;
+  }
+
+  if (enabled !== true && shouldSkipEmail(status, recipientType)) {
+    console.log(`[Email] skipped by config — status: ${status}, recipient: ${recipientType}`);
     return;
   }
 
@@ -114,14 +114,8 @@ export const sendQuestionStatusEmail = async (options) => {
         ${customMessage ? `<p>${customMessage}</p>` : ""}
         
         <div style="margin: 25px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #007bff; border-radius: 3px;">
-          <p style="margin: 0; font-weight: bold;">Question: ${
-            question.title
-          }</p>
-          ${
-            question.price
-              ? `<p style="margin: 5px 0 0 0;">Paid: $${question.price}</p>`
-              : ""
-          }
+          <p style="margin: 0; font-weight: bold;">Question: ${escapeHtml(stripHtml(question.title))}</p>
+          ${question.price ? `<p style="margin: 5px 0 0 0;">Paid: $${question.price}</p>` : ""}
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
@@ -373,194 +367,307 @@ function getEmailConfigByStatus(
 }
 
 
-export function paymentReceivedTemplate({ logoUrl, askerName, invoiceNumber, invoiceDate, questionTitle, subtotalUSD, invoiceUrl, supportEmail }) {
-  const primary = "#0070F3";
-  const accent = "#00B5D8";
-  const secondary = "#6C63FF";
-
+export function paymentReceivedTemplate({ logoUrl, askerName, invoiceNumber, invoiceDate, questionTitle: _qtr, subtotalUSD, invoiceUrl, supportEmail }) {
+  const questionTitle = stripHtml(_qtr);
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com');
   return `<!doctype html>
-  <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Payment Received</title>
-  <style>
-    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;background:#f6f8fb;margin:0;color:#222}
-    .card{max-width:680px;margin:24px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 6px 18px rgba(13,38,76,0.06)}
-    .header{padding:20px 24px;display:flex;align-items:center;justify-content:space-between;background:linear-gradient(90deg, ${primary} 0%, ${secondary} 100%);color:#fff}
-    .brand{display:flex;align-items:center;gap:12px}
-    .brand img{height:34px;border-radius:4px}
-    .summary{padding:24px}
-    .greeting{font-size:16px;margin:0 0 8px}
-    .lead{color:#555;margin:0 0 18px;line-height:1.45}
-    .meta{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
-    .meta .item{background:#f4fbfd;border-left:4px solid ${accent};padding:10px 12px;border-radius:6px;font-size:13px;color:#034047}
-    table.items{width:100%;border-collapse:collapse;margin-top:8px}
-    table.items th,table.items td{padding:12px 10px;border-bottom:1px solid #eef2f7;font-size:14px;text-align:left}
-    .total{display:flex;justify-content:flex-end;gap:16px;align-items:center;margin-top:16px}
-    .amount{font-size:20px;font-weight:700;color:${primary}}
-    .cta{padding:22px 24px 30px}
-    .btn{display:inline-block;background:${primary};color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600}
-    .foot{padding:18px 24px;font-size:13px;color:#8a96a3;background:#fbfdff;text-align:center}
-    @media (max-width:480px){.header,.summary,.cta,.foot{padding-left:16px;padding-right:16px}}
-  </style>
-  </head><body>
-    <div class="card" role="article" aria-labelledby="title">
-      <div class="header">
-        <a class="brand" href="${process.env.APP_BASE_URL || '#'}">
-          ${logoUrl ? `<img src="${logoUrl}" alt="logo">` : ''}
-          <div style="font-weight:700;font-size:16px">AskMeDirect</div>
-        </a>
-        <div style="text-align:right">
-          <div style="font-size:12px;opacity:0.95">Invoice</div>
-          <div style="font-weight:700;font-size:16px">${invoiceNumber || '—'}</div>
-        </div>
-      </div>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payment Received - AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
 
-      <div class="summary">
-        <p class="greeting">Hello ${escapeHtml(askerName) || 'Customer'},</p>
-        <p class="lead">We received your payment. Details of the transaction are shown below.</p>
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#0070F3 0%,#6C63FF 100%);padding:0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:28px 32px 18px;">
+            <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Expert answers, on demand</div>
+          </td>
+          <td align="right" style="padding:28px 32px 18px;">
+            <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
+              <div style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.2px;">Invoice</div>
+              <div style="font-size:14px;font-weight:700;color:#ffffff;margin-top:3px;">${invoiceNumber || '—'}</div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:0 32px 0;">
+            <div style="background:rgba(255,255,255,0.12);border-radius:6px 6px 0 0;padding:9px 16px;display:inline-block;">
+              <span style="font-size:13px;color:#fff;font-weight:600;">&#10003; &nbsp;Payment Confirmed</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-        <div class="meta" role="navigation">
-          <div class="item"><strong>Date:</strong> ${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</div>
-          <div class="item"><strong>Question:</strong> ${escapeHtml(questionTitle || '—')}</div>
-        </div>
+  <!-- BODY -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:19px;font-weight:700;color:#1a202c;">Hello ${escapeHtml(askerName) || 'Customer'},</p>
+      <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.7;">Thank you for your payment. Your transaction has been processed successfully and is confirmed below.</p>
 
-        <table class="items" role="table" aria-label="Invoice items">
-          <thead>
-            <tr><th>Description</th><th style="width:140px;text-align:right">Amount (USD)</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Question: ${escapeHtml(questionTitle || '—')}</td>
-              <td style="text-align:right">${formatUSD(subtotalUSD)}</td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- META PILLS -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+        <tr>
+          <td width="49%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;">
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Date</div>
+            <div style="font-size:14px;color:#1a202c;font-weight:600;margin-top:5px;">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</div>
+          </td>
+          <td width="2%"></td>
+          <td width="49%" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 16px;">
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Status</div>
+            <div style="font-size:14px;color:#16a34a;font-weight:700;margin-top:5px;">&#10003; Paid</div>
+          </td>
+        </tr>
+      </table>
 
-        <div class="total">
-          <div style="text-align:right">
-            <div style="color:#6b7280;font-size:13px">Total received</div>
-            <div class="amount">${formatUSD(subtotalUSD)}</div>
-          </div>
-        </div>
-      </div>
+      <!-- LINE ITEMS -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <tr style="background:#f8fafc;">
+          <th align="left" style="padding:11px 16px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:600;border-bottom:1px solid #e2e8f0;">Description</th>
+          <th align="right" style="padding:11px 16px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:600;border-bottom:1px solid #e2e8f0;">Amount (USD)</th>
+        </tr>
+        <tr>
+          <td style="padding:16px;font-size:14px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(questionTitle || '—')}</td>
+          <td align="right" style="padding:16px;font-size:14px;color:#374151;border-bottom:1px solid #f1f5f9;">${formatUSD(subtotalUSD)}</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:15px 16px;font-size:14px;font-weight:700;color:#1a202c;">Total Received</td>
+          <td align="right" style="padding:15px 16px;">
+            <span style="font-size:22px;font-weight:800;color:#0070F3;">${formatUSD(subtotalUSD)}</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-      <div class="cta">
-        <a class="btn" href="${invoiceUrl || '#'}" target="_blank" rel="noopener">View invoice</a>
-      </div>
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px 32px;" align="center">
+      <a href="${invoiceUrl || '#'}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#0070F3,#6C63FF);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        View Invoice &rarr;
+      </a>
+    </td>
+  </tr>
 
-      <div class="foot">
-        Need help? Contact <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}</a>.
-      </div>
-    </div>
-  </body></html>`;
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">Need help? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a> &nbsp;&middot;&nbsp; AskMeDirect</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
 }
 
-export function payoutPendingTemplate({ logoUrl, proName, invoiceNumber, invoiceDate, questionTitle, payoutAmountUSD, invoiceUrl, supportEmail }) {
-  const primary = "#0070F3";
-  const accent = "#00B5D8";
-  const secondary = "#6C63FF";
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Payout Pending</title>
-    <style>
-      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;background:#f6f8fb;margin:0;color:#222}
-      .card{max-width:680px;margin:24px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 6px 18px rgba(13,38,76,0.06)}
-      .header{padding:18px 22px;background:linear-gradient(90deg, ${secondary}, ${primary});color:#fff;display:flex;align-items:center;justify-content:space-between}
-      .brand{display:flex;align-items:center;gap:10px}
-      .brand img{height:32px;border-radius:4px}
-      .summary{padding:22px}
-      .title{font-size:16px;margin:0 0 8px}
-      .lead{color:#4b5563;margin:0 0 18px}
-      table{width:100%;border-collapse:collapse}
-      td, th{padding:10px;border-bottom:1px solid #eef2f7;font-size:14px}
-      .amount{font-weight:700;color:${primary};font-size:18px}
-      .btn{display:inline-block;background:${accent};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;font-weight:600}
-      .foot{padding:16px;background:#fbfdff;text-align:center;color:#8a96a3;font-size:13px}
-      @media (max-width:480px){ .header,.summary,.foot{padding-left:16px;padding-right:16px}}
-    </style>
-  </head><body>
-    <div class="card">
-      <div class="header">
-        <a href="${process.env.APP_BASE_URL || '#'}" class="brand">
-          ${logoUrl ? `<img src="${logoUrl}" alt="logo">` : ''}
-          <strong>AskMeDirect</strong>
-        </a>
-        <div style="text-align:right">
-          <div style="font-size:12px">Pending Payout</div>
-          <div style="font-weight:700">${invoiceNumber || '—'}</div>
-        </div>
-      </div>
+export function payoutPendingTemplate({ logoUrl, proName, invoiceNumber, invoiceDate, questionTitle: _qtp, payoutAmountUSD, invoiceUrl, supportEmail }) {
+  const questionTitle = stripHtml(_qtp);
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payout Pending - AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
 
-      <div class="summary">
-        <p class="title">Hi ${escapeHtml(proName) || 'Professional'},</p>
-        <p class="lead">A payout for the question below could not be sent immediately and has been recorded as pending. We'll attempt transfer again once your Stripe account is ready.</p>
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#d97706 0%,#ef4444 100%);padding:0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:28px 32px 18px;">
+            <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Expert answers, on demand</div>
+          </td>
+          <td align="right" style="padding:28px 32px 18px;">
+            <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
+              <div style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.2px;">Reference</div>
+              <div style="font-size:14px;font-weight:700;color:#ffffff;margin-top:3px;">${invoiceNumber || '—'}</div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:0 32px 0;">
+            <div style="background:rgba(255,255,255,0.12);border-radius:6px 6px 0 0;padding:9px 16px;display:inline-block;">
+              <span style="font-size:13px;color:#fff;font-weight:600;">&#9200; &nbsp;Payout Pending</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-        <table>
-          <tr><th style="text-align:left">Question</th><td style="text-align:right">${escapeHtml(questionTitle || '—')}</td></tr>
-          <tr><th style="text-align:left">Amount pending</th><td style="text-align:right" class="amount">${formatUSD(payoutAmountUSD)}</td></tr>
-          <tr><th style="text-align:left">Date</th><td style="text-align:right">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</td></tr>
-        </table>
+  <!-- BODY -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:19px;font-weight:700;color:#1a202c;">Hi ${escapeHtml(proName) || 'Professional'},</p>
+      <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.7;">A payout for the question below could not be sent immediately and has been recorded as <strong style="color:#d97706;">pending</strong>. We will attempt the transfer again once your Stripe account is ready.</p>
 
-        <div style="margin-top:18px;text-align:center">
-          <a class="btn" href="${invoiceUrl || '#'}" target="_blank" rel="noopener">View pending payout</a>
-        </div>
-      </div>
+      <!-- DETAILS TABLE -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <tr style="background:#fffbeb;">
+          <td style="padding:13px 16px;font-size:12px;font-weight:600;color:#92400e;text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid #fde68a;" colspan="2">Payout Details</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;width:40%;border-bottom:1px solid #f1f5f9;">Question</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(questionTitle || '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #f1f5f9;">Date</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:16px;font-size:14px;font-weight:700;color:#1a202c;">Amount Pending</td>
+          <td align="right" style="padding:16px;">
+            <span style="font-size:22px;font-weight:800;color:#d97706;">${formatUSD(payoutAmountUSD)}</span>
+          </td>
+        </tr>
+      </table>
 
-      <div class="foot">Questions? <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}</a></div>
-    </div>
-  </body></html>`;
+      <!-- INFO BOX -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;margin-bottom:8px;">
+        <tr>
+          <td style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;"><strong>What happens next?</strong> Ensure your Stripe account is fully verified and able to receive transfers. We will automatically retry the payout once everything is in order.</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px 32px;" align="center">
+      <a href="${invoiceUrl || '#'}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#d97706,#ef4444);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        View Pending Payout &rarr;
+      </a>
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">Questions? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a> &nbsp;&middot;&nbsp; AskMeDirect</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
 }
 
-export function payoutSentTemplate({ logoUrl, proName, invoiceNumber, invoiceDate, questionTitle, payoutAmountUSD, transferId, invoiceUrl, supportEmail }) {
-  const primary = "#0070F3";
-  const secondary = "#6C63FF";
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Payout Sent</title>
-    <style>
-      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;background:#f6f8fb;margin:0;color:#222}
-      .card{max-width:680px;margin:24px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 6px 18px rgba(13,38,76,0.06)}
-      .header{padding:18px 22px;background:linear-gradient(90deg, ${primary}, ${secondary});color:#fff;display:flex;align-items:center;justify-content:space-between}
-      .brand img{height:32px;border-radius:4px}
-      .summary{padding:22px}
-      .lead{color:#4b5563}
-      table{width:100%;border-collapse:collapse;margin-top:12px}
-      td,th{padding:10px;border-bottom:1px solid #eef2f7;font-size:14px}
-      .amount{font-weight:700;color:${primary};font-size:18px}
-      .details{margin-top:14px;color:#6b7280;font-size:13px}
-      .btn{display:inline-block;background:${secondary};color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:600}
-      .foot{padding:16px;background:#fbfdff;text-align:center;color:#8a96a3;font-size:13px}
-      @media (max-width:480px){ .header,.summary,.foot{padding-left:16px;padding-right:16px}}
-    </style>
-  </head><body>
-    <div class="card">
-      <div class="header">
-        <a href="${process.env.APP_BASE_URL || '#'}" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:#fff">
-          ${logoUrl ? `<img src="${logoUrl}" alt="logo">` : ''}
-          <strong>AskMeDirect</strong>
-        </a>
-        <div style="text-align:right">
-          <div style="font-size:12px">Payout Sent</div>
-          <div style="font-weight:700">${invoiceNumber || '—'}</div>
-        </div>
-      </div>
+export function payoutSentTemplate({ logoUrl, proName, invoiceNumber, invoiceDate, questionTitle: _qts, payoutAmountUSD, transferId, invoiceUrl, supportEmail }) {
+  const questionTitle = stripHtml(_qts);
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payout Sent - AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
 
-      <div class="summary">
-        <p style="margin:0 0 8px 0;font-size:16px">Hello ${escapeHtml(proName) || 'Professional'},</p>
-        <p class="lead">Your payout for the question below has been processed.</p>
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#059669 0%,#0070F3 100%);padding:0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:28px 32px 18px;">
+            <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Expert answers, on demand</div>
+          </td>
+          <td align="right" style="padding:28px 32px 18px;">
+            <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
+              <div style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.2px;">Reference</div>
+              <div style="font-size:14px;font-weight:700;color:#ffffff;margin-top:3px;">${invoiceNumber || '—'}</div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:0 32px 0;">
+            <div style="background:rgba(255,255,255,0.12);border-radius:6px 6px 0 0;padding:9px 16px;display:inline-block;">
+              <span style="font-size:13px;color:#fff;font-weight:600;">&#10003; &nbsp;Payout Sent</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-        <table>
-          <tr><th style="text-align:left">Question</th><td style="text-align:right">${escapeHtml(questionTitle || '—')}</td></tr>
-          <tr><th style="text-align:left">Amount paid</th><td style="text-align:right" class="amount">${formatUSD(payoutAmountUSD)}</td></tr>
-          <tr><th style="text-align:left">Transfer ID</th><td style="text-align:right">${escapeHtml(transferId || '—')}</td></tr>
-          <tr><th style="text-align:left">Date</th><td style="text-align:right">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</td></tr>
-        </table>
+  <!-- BODY -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:19px;font-weight:700;color:#1a202c;">Hello ${escapeHtml(proName) || 'Professional'},</p>
+      <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.7;">Great news — your payout has been <strong style="color:#059669;">successfully processed</strong> and is on its way to your Stripe account.</p>
 
-        <p class="details">You can view the official invoice and history by clicking the button below.</p>
+      <!-- DETAILS TABLE -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <tr style="background:#f0fdf4;">
+          <td style="padding:13px 16px;font-size:12px;font-weight:600;color:#166534;text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid #bbf7d0;" colspan="2">Payout Details</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;width:40%;border-bottom:1px solid #f1f5f9;">Question</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(questionTitle || '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #f1f5f9;">Transfer ID</td>
+          <td align="right" style="padding:14px 16px;font-size:12px;color:#374151;font-family:monospace;border-bottom:1px solid #f1f5f9;">${escapeHtml(transferId || '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #f1f5f9;">Date</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:16px;font-size:14px;font-weight:700;color:#1a202c;">Amount Paid</td>
+          <td align="right" style="padding:16px;">
+            <span style="font-size:22px;font-weight:800;color:#059669;">${formatUSD(payoutAmountUSD)}</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-        <div style="margin-top:14px;text-align:center">
-          <a class="btn" href="${invoiceUrl || '#'}" target="_blank" rel="noopener">View payout invoice</a>
-        </div>
-      </div>
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px 32px;" align="center">
+      <a href="${invoiceUrl || '#'}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#059669,#0070F3);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        View Payout Invoice &rarr;
+      </a>
+    </td>
+  </tr>
 
-      <div class="foot">If you have questions contact <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com')}</a></div>
-    </div>
-  </body></html>`;
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">Questions? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a> &nbsp;&middot;&nbsp; AskMeDirect</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
 }
+
 
 // small helpers used by templates
 export function escapeHtml(str) {
@@ -571,7 +678,72 @@ export function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+export function stripHtml(html) {
+  if (!html) return "";
+  return String(html)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 export function formatUSD(n) {
   const num = Number(n || 0);
   return `$${num.toFixed(2)}`;
+}
+
+export function welcomeEmailTemplate({ firstName, role, supportEmail }) {
+  const primary = "#0070F3";
+  const secondary = "#6C63FF";
+
+  const roleLabel = role === "professional" ? "Professional" : "Member";
+  const roleMessage =
+    role === "professional"
+      ? "You can now receive questions from clients, set your pricing, and build your profile to stand out."
+      : "You can now browse professionals and submit your questions to get expert answers.";
+  const ctaLabel = role === "professional" ? "Complete Your Profile" : "Find a Professional";
+  const ctaUrl = `${process.env.FRONTEND_URL || "#"}`;
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Welcome to AskMeDirect</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;background:#f6f8fb;margin:0;color:#222}
+  .card{max-width:600px;margin:24px auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px rgba(13,38,76,0.07)}
+  .header{padding:32px 28px;background:linear-gradient(135deg,${primary} 0%,${secondary} 100%);color:#fff;text-align:center}
+  .header h1{margin:0;font-size:24px;font-weight:700}
+  .header p{margin:8px 0 0;opacity:0.9;font-size:14px}
+  .body{padding:28px}
+  .body p{line-height:1.6;color:#444;margin:0 0 14px}
+  .highlight{background:#f0f4ff;border-left:4px solid ${primary};padding:14px 16px;border-radius:6px;margin:20px 0;color:#1a3a6b;font-size:14px}
+  .cta{text-align:center;margin:28px 0 10px}
+  .btn{display:inline-block;background:${primary};color:#fff;padding:13px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px}
+  .foot{padding:18px;background:#fbfdff;text-align:center;font-size:12px;color:#8a96a3;border-top:1px solid #eef2f7}
+  @media(max-width:480px){.header,.body{padding-left:16px;padding-right:16px}}
+</style>
+</head><body>
+  <div class="card">
+    <div class="header">
+      <h1>Welcome to AskMeDirect!</h1>
+      <p>Your account is ready</p>
+    </div>
+    <div class="body">
+      <p>Hi ${escapeHtml(firstName) || "there"},</p>
+      <p>We're excited to have you on board as a <strong>${escapeHtml(roleLabel)}</strong>.</p>
+      <div class="highlight">${escapeHtml(roleMessage)}</div>
+      <p>If you ever need help, our support team is just an email away.</p>
+      <div class="cta">
+        <a class="btn" href="${ctaUrl}" target="_blank" rel="noopener">${escapeHtml(ctaLabel)}</a>
+      </div>
+    </div>
+    <div class="foot">
+      Questions? <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || "admin@askmedirect.com")}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || "admin@askmedirect.com")}</a>
+      &nbsp;·&nbsp; AskMeDirect
+    </div>
+  </div>
+</body></html>`;
 }
