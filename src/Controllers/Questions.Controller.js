@@ -27,6 +27,49 @@ const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
   process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
 );
 
+// helper: send flagged-question emails to all admins + professional + asker
+async function notifyAdminsAboutFlaggedQuestion(question, flaggedByType, reason) {
+  await question.populate([
+    { path: "professional", populate: { path: "user", select: "firstName lastName email" } },
+    { path: "asker" },
+  ]);
+
+  const allAdmins = await Admin.find({}).populate("user", "firstName lastName email");
+  const customMessage = `Flagged by ${flaggedByType}. Reason: ${reason}`;
+
+  for (const admin of allAdmins) {
+    if (admin.user?.email) {
+      sendQuestionStatusEmail({
+        recipientType: "admin",
+        status: "flagged",
+        question,
+        recipient: admin.user,
+        customMessage,
+      }).catch((err) => console.error("Email to admin failed:", err));
+    }
+  }
+
+  const professionalUser = question.professional?.user;
+  if (professionalUser?.email) {
+    sendQuestionStatusEmail({
+      recipientType: "professional",
+      status: "flagged",
+      question,
+      recipient: professionalUser,
+    }).catch((err) => console.error("Email to professional failed:", err));
+  }
+
+  const asker = question.asker;
+  if (asker?.email) {
+    sendQuestionStatusEmail({
+      recipientType: "asker",
+      status: "flagged",
+      question,
+      recipient: asker,
+    }).catch((err) => console.error("Email to asker failed:", err));
+  }
+}
+
 // helper: populate users and send emails to both parties (non-blocking)
 async function notifyStatusChange(question, status, customMessage, actionUrl) {
   try {
@@ -999,12 +1042,12 @@ export const flagQuestion = asynchandler(async (req, res) => {
   
 
   // Notify admins via email
-  // try {
-  //   await notifyAdminsAboutFlaggedQuestion(question, isAsker ? "asker" : "professional", reason);
-  // } catch (err) {
-  //   console.error("Failed to send notification about flagged question:", err);
-  //   // Continue execution even if email fails
-  // }
+  try {
+    await notifyAdminsAboutFlaggedQuestion(question, isAsker ? "asker" : "professional", reason);
+  } catch (err) {
+    console.error("Failed to send notification about flagged question:", err);
+    // Continue execution even if email fails
+  }
 
   return res
     .status(200)
@@ -1071,9 +1114,9 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
 
     question.flagging.isFlagged = false;
 
-    // Notify professional
-    // await notifyStatusChange(question, "flag_reviewed_reanswer",
-    //   `An administrator has reviewed this flagged question and requests that you provide a new answer. ${note || ""}`);
+    // Notify professional and asker
+    notifyStatusChange(question, "flag_reviewed_reanswer",
+      `An administrator has reviewed this flagged question and requests that you provide a new answer. ${note || ""}`).catch(() => {});
   } else if (action === "refund") {
     // Process refund logic here if payment was made
     if (question.payment?.paid) {
@@ -1097,8 +1140,8 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
     }
 
     // Notify both parties
-    // await notifyStatusChange(question, "flag_reviewed_refund",
-    //   `An administrator has reviewed this flagged question and approved a refund. ${note || ""}`);
+    notifyStatusChange(question, "flag_reviewed_refund",
+      `An administrator has reviewed this flagged question and approved a refund. ${note || ""}`).catch(() => {});
   } else if (action === "no_action") {
     // Simply resolve the flag without changes
     question.flagging.isFlagged = false;
@@ -1115,41 +1158,11 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
     });
 
     // Notify parties
-    // await notifyStatusChange(question, "flag_reviewed_no_action",
-    //   `An administrator has reviewed this flagged question and determined no action is needed. ${note || ""}`);
+    notifyStatusChange(question, "flag_reviewed_no_action",
+      `An administrator has reviewed this flagged question and determined no action is needed. ${note || ""}`).catch(() => {});
   }
 
   await question.save();
-
-  // try {
-  //   const professionalPopulated = await Professional.findById(question.professional._id).populate("user");
-  //   const askerPopulated = await Users.findById(question.asker._id);
-  //   // await question.populate("asker");
-
-  //   // Notify professional
-  //   if (professionalPopulated?.user?.email) {
-  //     sendQuestionStatusEmail({
-  //       recipientType: "professional",
-  //       status: emailStatus,
-  //       question,
-  //       recipient: professionalPopulated.user,
-  //       customMessage: note ? `Administrator's note: ${note}` : undefined,
-  //     }).catch((err) => console.error("Email to professional failed:", err));
-  //   }
-
-  //   // Notify asker
-  //   if (askerPopulated?.user?.email) {
-  //     sendQuestionStatusEmail({
-  //       recipientType: "asker",
-  //       status: emailStatus,
-  //       question,
-  //       recipient: question.asker,
-  //       customMessage: note ? `Administrator's note: ${note}` : undefined,
-  //     }).catch((err) => console.error("Email to asker failed:", err));
-  //   }
-  // } catch (err) {
-  //   console.error("Failed to send notification about flagged question review:", err);
-  // }
 
 
   return res
