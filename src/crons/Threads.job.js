@@ -17,6 +17,7 @@ export const autoCloseExpiredQuestions = async () => {
   const expiredQuestions = await Question.find({
     status: { $in: ["quoted", "awaiting_response", "paid"] },
     answerBy: { $lt: now },
+    "flagging.isFlagged": { $ne: true },
   });
 
   console.log(
@@ -65,6 +66,7 @@ export const autoCloseExpiredThreads = async () => {
     "thread.followUpWindowExpiresAt": { $lt: now },
     "payment.paid": true,
     "thread.threadClosedEarlier": false,
+    "flagging.isFlagged": { $ne: true },
   }).populate("professional");
 
   console.log(
