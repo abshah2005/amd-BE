@@ -11,7 +11,7 @@ export const accountDeletionService = {
   scheduleProfileDeletion: async (userId, profileType, options = {}) => {
     const { adminInitiated = false, adminId = null } = options;
     const deletionDate = new Date();
-    deletionDate.setDate(deletionDate.getDate() + 5);
+    deletionDate.setDate(deletionDate.getDate() + 3);
 
     if (profileType === "asker") {
       await Users.findByIdAndUpdate(userId, {

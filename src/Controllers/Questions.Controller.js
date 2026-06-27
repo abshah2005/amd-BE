@@ -1162,3 +1162,42 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
       )
     );
 });
+
+export const getAllFlaggedQuestions = asynchandler(async (req, res) => {
+  const { page = 1, limit = 10, search = "" } = req.query;
+
+  const filter = { "flagging.isFlagged": true };
+
+  if (search) {
+    filter.$or = [
+      { title: { $regex: search, $options: "i" } },
+      { body: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const total = await Question.countDocuments(filter);
+  const questions = await Question.find(filter)
+    .sort({ "flagging.flaggedAt": -1 })
+    .skip(skip)
+    .limit(parseInt(limit))
+    .populate({
+      path: "professional",
+      populate: { path: "user", select: "firstName lastName" },
+    })
+    .populate({ path: "asker", select: "firstName lastName" });
+
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        questions,
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit),
+      },
+      "Flagged questions listed"
+    )
+  );
+});
