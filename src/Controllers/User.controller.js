@@ -300,7 +300,7 @@ const registerStep3 = asynchandler(async (req, res) => {
   const welcomeHtml = welcomeEmailTemplate({
     firstName: updatedUser.firstName,
     role: updatedUser.role,
-    supportEmail: process.env.SUPPORT_EMAIL,
+    supportEmail: "admin@askmedirect.com",
   });
   sendEmail(updatedUser.email, "Welcome to AskMeDirect!", welcomeHtml).catch((err) =>
     console.error("[Welcome email] failed to send:", err.message)

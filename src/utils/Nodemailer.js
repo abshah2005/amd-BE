@@ -387,7 +387,7 @@ export function paymentReceivedTemplate({ logoUrl, askerName, invoiceNumber, inv
         <tr>
           <td style="padding:28px 32px 18px;">
             <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
-            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Expert answers, on demand</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Professional answers, on demand</div>
           </td>
           <td align="right" style="padding:28px 32px 18px;">
             <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
@@ -491,7 +491,7 @@ export function payoutPendingTemplate({ logoUrl, proName, invoiceNumber, invoice
         <tr>
           <td style="padding:28px 32px 18px;">
             <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
-            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Expert answers, on demand</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Professional answers, on demand</div>
           </td>
           <td align="right" style="padding:28px 32px 18px;">
             <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
@@ -592,7 +592,7 @@ export function payoutSentTemplate({ logoUrl, proName, invoiceNumber, invoiceDat
         <tr>
           <td style="padding:28px 32px 18px;">
             <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
-            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Expert answers, on demand</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Professional answers, on demand</div>
           </td>
           <td align="right" style="padding:28px 32px 18px;">
             <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
@@ -698,52 +698,136 @@ export function formatUSD(n) {
 }
 
 export function welcomeEmailTemplate({ firstName, role, supportEmail }) {
-  const primary = "#0070F3";
-  const secondary = "#6C63FF";
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || "admin@askmedirect.com");
+  const baseUrl = process.env.FRONTEND_URL || "#";
+  const isPro = role === "professional";
 
-  const roleLabel = role === "professional" ? "Professional" : "Member";
-  const roleMessage =
-    role === "professional"
-      ? "You can now receive questions from clients, set your pricing, and build your profile to stand out."
-      : "You can now browse professionals and submit your questions to get expert answers.";
-  const ctaLabel = role === "professional" ? "Complete Your Profile" : "Find a Professional";
-  const ctaUrl = `${process.env.FRONTEND_URL || "#"}`;
+  const ctaLabel = isPro ? "Complete Your Profile" : "Browse Professionals";
+  const ctaUrl   = isPro ? `${baseUrl}/dashboard` : `${baseUrl}`;
+  const headerTag = isPro ? "Professional Account" : "Asker Account";
+
+  const stepsHtml = isPro
+    ? `
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">1</span>
+        <strong>Complete your profile</strong> — add your bio, expertise, and a photo so askers can trust you at a glance.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">2</span>
+        <strong>Set your price range</strong> — define what you charge so askers know what to expect before submitting.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">3</span>
+        <strong>Link your LinkedIn</strong> — earn a verified badge and boost your credibility with askers instantly.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">4</span>
+        <strong>Start receiving questions</strong> — approve, quote, or decline requests all from your dashboard.
+      </td></tr>`
+    : `
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">1</span>
+        <strong>Browse professionals</strong> — filter by expertise, language, location, and price range to find the right fit.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">2</span>
+        <strong>Write your question</strong> — be as specific as you need. The more context you share, the better the answer.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">3</span>
+        <strong>Set your price or request a quote</strong> — pay what you're comfortable with, or let the professional suggest a rate.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">4</span>
+        <strong>Get a private, thoughtful answer</strong> — all responses are confidential and delivered directly to you.
+      </td></tr>`;
 
   return `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Welcome to AskMeDirect</title>
-<style>
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;background:#f6f8fb;margin:0;color:#222}
-  .card{max-width:600px;margin:24px auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px rgba(13,38,76,0.07)}
-  .header{padding:32px 28px;background:linear-gradient(135deg,${primary} 0%,${secondary} 100%);color:#fff;text-align:center}
-  .header h1{margin:0;font-size:24px;font-weight:700}
-  .header p{margin:8px 0 0;opacity:0.9;font-size:14px}
-  .body{padding:28px}
-  .body p{line-height:1.6;color:#444;margin:0 0 14px}
-  .highlight{background:#f0f4ff;border-left:4px solid ${primary};padding:14px 16px;border-radius:6px;margin:20px 0;color:#1a3a6b;font-size:14px}
-  .cta{text-align:center;margin:28px 0 10px}
-  .btn{display:inline-block;background:${primary};color:#fff;padding:13px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px}
-  .foot{padding:18px;background:#fbfdff;text-align:center;font-size:12px;color:#8a96a3;border-top:1px solid #eef2f7}
-  @media(max-width:480px){.header,.body{padding-left:16px;padding-right:16px}}
-</style>
-</head><body>
-  <div class="card">
-    <div class="header">
-      <h1>Welcome to AskMeDirect!</h1>
-      <p>Your account is ready</p>
-    </div>
-    <div class="body">
-      <p>Hi ${escapeHtml(firstName) || "there"},</p>
-      <p>We're excited to have you on board as a <strong>${escapeHtml(roleLabel)}</strong>.</p>
-      <div class="highlight">${escapeHtml(roleMessage)}</div>
-      <p>If you ever need help, our support team is just an email away.</p>
-      <div class="cta">
-        <a class="btn" href="${ctaUrl}" target="_blank" rel="noopener">${escapeHtml(ctaLabel)}</a>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Welcome to AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#0070F3 0%,#6C63FF 100%);padding:36px 32px 28px;text-align:center;">
+      <div style="font-size:26px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.75);margin-top:4px;letter-spacing:0.5px;">Professional answers, on demand</div>
+      <div style="margin-top:18px;display:inline-block;background:rgba(255,255,255,0.18);border-radius:20px;padding:5px 16px;">
+        <span style="font-size:12px;color:#fff;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;">${escapeHtml(headerTag)}</span>
       </div>
-    </div>
-    <div class="foot">
-      Questions? <a href="mailto:${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || "admin@askmedirect.com")}">${escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || "admin@askmedirect.com")}</a>
-      &nbsp;·&nbsp; AskMeDirect
-    </div>
-  </div>
+    </td>
+  </tr>
+
+  <!-- GREETING -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#1a202c;">Welcome aboard, ${escapeHtml(firstName) || "there"}! &#127881;</p>
+      <p style="margin:0 0 24px;font-size:14px;color:#64748b;line-height:1.7;">
+        ${isPro
+          ? "Your professional account on AskMeDirect is ready. People with real questions are looking for experts like you — let's get your profile set up so they can find you."
+          : "Your AskMeDirect account is ready. Skip the endless Googling — get clear, private answers from vetted professionals who've actually been there."}
+      </p>
+    </td>
+  </tr>
+
+  <!-- WHAT'S NEXT -->
+  <tr>
+    <td style="padding:0 32px;">
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:20px 22px;">
+        <p style="margin:0 0 14px;font-size:13px;font-weight:700;color:#0070F3;text-transform:uppercase;letter-spacing:1px;">What to do next</p>
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${stepsHtml}
+        </table>
+      </div>
+    </td>
+  </tr>
+
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px;" align="center">
+      <a href="${ctaUrl}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#0070F3,#6C63FF);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        ${escapeHtml(ctaLabel)} &rarr;
+      </a>
+    </td>
+  </tr>
+
+  <!-- SPAM NOTICE -->
+  <tr>
+    <td style="padding:0 32px 28px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;">
+              <strong>&#9993; Keep our emails out of spam</strong> — please add
+              <strong>${support}</strong> to your contacts or mark it as
+              <em>Not Spam</em> if it lands in your junk folder. We'll use this
+              address to send you important notifications and updates.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">
+        Need help? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a>
+        &nbsp;&middot;&nbsp; AskMeDirect &nbsp;&middot;&nbsp;
+        <a href="${baseUrl}" style="color:#0070F3;text-decoration:none;">askmedirect.com</a>
+      </p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
 </body></html>`;
 }

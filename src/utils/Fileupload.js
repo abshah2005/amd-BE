@@ -19,7 +19,7 @@ const uploadOnS3 = async (file) => {
     Key: fileName,
     Body: file.buffer,
     ContentType: file.mimetype,
-    ACL: "public-read",
+    // ACL: "public-read",
   };
 
   try {
