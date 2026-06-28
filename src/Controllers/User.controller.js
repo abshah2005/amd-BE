@@ -297,14 +297,16 @@ const registerStep3 = asynchandler(async (req, res) => {
     updatedUser._id,
   );
 
-  const welcomeHtml = welcomeEmailTemplate({
-    firstName: updatedUser.firstName,
-    role: updatedUser.role,
-    supportEmail: "admin@askmedirect.com",
-  });
-  sendEmail(updatedUser.email, "Welcome to AskMeDirect!", welcomeHtml).catch((err) =>
-    console.error("[Welcome email] failed to send:", err.message)
-  );
+  if (updatedUser.role === "asker") {
+    const welcomeHtml = welcomeEmailTemplate({
+      firstName: updatedUser.firstName,
+      role: "asker",
+      supportEmail: "admin@askmedirect.com",
+    });
+    sendEmail(updatedUser.email, "Welcome to AskMeDirect!", welcomeHtml).catch((err) =>
+      console.error("[Welcome email] failed to send:", err.message)
+    );
+  }
 
   return res.status(200).json(
     new Apiresponse(
@@ -415,6 +417,16 @@ const registerStep4 = asynchandler(async (req, res) => {
   const sanitizedUser = await Users.findById(user._id).select(
     "-password -refreshToken",
   );
+
+  const welcomeHtml = welcomeEmailTemplate({
+    firstName: sanitizedUser.firstName,
+    role: "professional",
+    supportEmail: "admin@askmedirect.com",
+  });
+  sendEmail(sanitizedUser.email, "Welcome to AskMeDirect!", welcomeHtml).catch((err) =>
+    console.error("[Welcome email] failed to send:", err.message)
+  );
+
   return res
     .status(200)
     .json(

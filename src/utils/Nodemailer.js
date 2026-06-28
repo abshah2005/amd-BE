@@ -702,7 +702,7 @@ export function welcomeEmailTemplate({ firstName, role, supportEmail }) {
   const baseUrl = process.env.FRONTEND_URL || "#";
   const isPro = role === "professional";
 
-  const ctaLabel = isPro ? "Complete Your Profile" : "Browse Professionals";
+  const ctaLabel = isPro ? "Go to Dashboard" : "Browse Professionals";
   const ctaUrl   = isPro ? `${baseUrl}/dashboard` : `${baseUrl}`;
   const headerTag = isPro ? "Professional Account" : "Asker Account";
 
@@ -710,19 +710,19 @@ export function welcomeEmailTemplate({ firstName, role, supportEmail }) {
     ? `
       <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
         <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">1</span>
-        <strong>Complete your profile</strong> — add your bio, expertise, and a photo so askers can trust you at a glance.
+        <strong>Your profile is live</strong> — askers can already discover you based on your expertise, tags, and price range.
       </td></tr>
       <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
         <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">2</span>
-        <strong>Set your price range</strong> — define what you charge so askers know what to expect before submitting.
+        <strong>We'll notify you by email</strong> — whenever a new question arrives, you'll get an instant notification.
       </td></tr>
       <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
         <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">3</span>
-        <strong>Link your LinkedIn</strong> — earn a verified badge and boost your credibility with askers instantly.
+        <strong>Approve, quote, or decline</strong> — you're always in control. Review each question and respond on your terms.
       </td></tr>
       <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
         <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">4</span>
-        <strong>Start receiving questions</strong> — approve, quote, or decline requests all from your dashboard.
+        <strong>Build your reputation</strong> — great answers earn great reviews and keep askers coming back.
       </td></tr>`
     : `
       <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
@@ -769,7 +769,7 @@ export function welcomeEmailTemplate({ firstName, role, supportEmail }) {
       <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#1a202c;">Welcome aboard, ${escapeHtml(firstName) || "there"}! &#127881;</p>
       <p style="margin:0 0 24px;font-size:14px;color:#64748b;line-height:1.7;">
         ${isPro
-          ? "Your professional account on AskMeDirect is ready. People with real questions are looking for experts like you — let's get your profile set up so they can find you."
+          ? "You're all set! Your professional profile is live on AskMeDirect. People with real questions are already looking for experts like you — sit back and let the questions come to you."
           : "Your AskMeDirect account is ready. Skip the endless Googling — get clear, private answers from vetted professionals who've actually been there."}
       </p>
     </td>
