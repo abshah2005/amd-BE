@@ -4,6 +4,7 @@ import { Users } from "../models/Users.model.js";
 import { Professional } from "../models/Professional.model.js";
 import { Asker } from "../models/Asker.model.js";
 import { Question } from "../models/Question.model.js";
+import { Invoice } from "../models/Invoice.model.js";
 import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -414,4 +415,123 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
         "Users list",
       ),
     );
+});
+
+export const getInvoiceAnalytics = asynchandler(async (req, res) => {
+  const { page = 1, limit = 20 } = req.query;
+  const pageNum = Math.max(1, parseInt(page));
+  const lim = Math.max(1, Math.min(100, parseInt(limit)));
+  const skip = (pageNum - 1) * lim;
+
+  // Aggregate KPIs across all invoice types in one pass
+  // Note: platformFeeAmount/penaltyAmount are stored on payout invoices, not payment_received
+  const [facetResult] = await Invoice.aggregate([
+    {
+      $facet: {
+        received: [
+          { $match: { type: "payment_received", status: "issued" } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              subtotalSum: { $sum: "$amounts.subtotal" },
+            },
+          },
+        ],
+        payoutSent: [
+          { $match: { type: "payout_sent", status: "issued" } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              totalPaidOut: { $sum: "$amounts.total" },
+              platformFees: { $sum: "$amounts.platformFeeAmount" },
+              penaltyFees: { $sum: "$amounts.penaltyAmount" },
+            },
+          },
+        ],
+        payoutPending: [
+          { $match: { type: "payout_pending", status: "issued" } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              totalPending: { $sum: "$amounts.total" },
+              platformFees: { $sum: "$amounts.platformFeeAmount" },
+              penaltyFees: { $sum: "$amounts.penaltyAmount" },
+            },
+          },
+        ],
+      },
+    },
+  ]).allowDiskUse(true);
+
+  // Monthly platform fee revenue for the last 12 calendar months
+  // Fees are on payout_sent + payout_pending invoices; payment count from payment_received
+  const now = new Date();
+  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+  const monthlyRevenue = await Invoice.aggregate([
+    {
+      $match: {
+        type: { $in: ["payout_sent", "payout_pending"] },
+        status: "issued",
+        createdAt: { $gte: twelveMonthsAgo },
+      },
+    },
+    {
+      $group: {
+        _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+        platformFees: { $sum: "$amounts.platformFeeAmount" },
+        penaltyFees: { $sum: "$amounts.penaltyAmount" },
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { "_id.year": 1, "_id.month": 1 } },
+  ]).allowDiskUse(true);
+
+  // Recent invoices with pagination
+  const [recentInvoices, totalInvoices] = await Promise.all([
+    Invoice.find({ status: "issued" })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(lim)
+      .populate("question", "title")
+      .lean(),
+    Invoice.countDocuments({ status: "issued" }),
+  ]);
+
+  const r = facetResult.received[0] || {};
+  const s = facetResult.payoutSent[0] || {};
+  const p = facetResult.payoutPending[0] || {};
+
+  const platformFeeRevenue = (s.platformFees || 0) + (p.platformFees || 0);
+  const penaltyFeeRevenue = (s.penaltyFees || 0) + (p.penaltyFees || 0);
+
+  res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        kpi: {
+          totalInvoices,
+          grossRevenue: r.subtotalSum || 0,
+          platformFeeRevenue,
+          penaltyFeeRevenue,
+          totalNetRevenue: platformFeeRevenue + penaltyFeeRevenue,
+          totalPayoutsSent: s.totalPaidOut || 0,
+          totalPayoutsPending: p.totalPending || 0,
+          paymentReceivedCount: r.count || 0,
+          payoutSentCount: s.count || 0,
+          payoutPendingCount: p.count || 0,
+        },
+        monthlyRevenue,
+        recentInvoices,
+        total: totalInvoices,
+        page: pageNum,
+        limit: lim,
+        totalPages: Math.ceil(totalInvoices / lim),
+      },
+      "Invoice analytics",
+    ),
+  );
 });
