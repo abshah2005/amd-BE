@@ -1,4 +1,4 @@
-export const DB_NAME='AMD4';
+export const DB_NAME='AMD-prod';
 
 // Stripe settlement currencies enabled in the platform's connected-account settings.
 // Any country whose default currency is NOT in this set must be blocked at onboarding
