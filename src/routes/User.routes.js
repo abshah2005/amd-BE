@@ -19,6 +19,7 @@ import {
   registerStep4,
   toggleProfessionalStatus,
   linkLinkedInAccount,
+  testSendEmail,
 } from "../Controllers/User.controller.js";
 import { upload } from "../middlewares/Multer.middleware.js";
 import { verifyJWT,trackActive, verifyAdmin } from "../middlewares/Authentication.middleware.js";
@@ -45,6 +46,7 @@ router.route("/update/professional/status").put(verifyJWT, verifyAdmin,togglePro
 
 router.route("/role/active").post(verifyJWT,trackActive ,toggleActiveRole);
 router.route("/register/state").get(getRegistrationState);
+router.route("/email/test").post(testSendEmail);
 
 router.route("/auth/linkedin/callback").post(linkedinCallback);
 router.route("/profile/linkedin").get(getLinkedInProfile);

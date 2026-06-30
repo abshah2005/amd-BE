@@ -1,4 +1,4 @@
-import { uploadOnS3 } from "../utils/Fileupload.js";
+﻿import { uploadOnS3 } from "../utils/Fileupload.js";
 import { asynchandler } from "../utils/Asynchandler.js";
 import { Apiresponse } from "../utils/Apiresponse.js";
 import { Apierror } from "../utils/Apierror.js";
@@ -12,7 +12,7 @@ import { Users } from "../models/Users.model.js";
 import { Professional } from "../models/Professional.model.js";
 import { Asker } from "../models/Asker.model.js";
 import { Admin } from "../models/Admin.model.js";
-import { sendEmail } from "../utils/Nodemailer.js";
+import { sendEmail, welcomeEmailTemplate } from "../utils/Nodemailer.js";
 
 dotenv.config();
 
@@ -47,7 +47,7 @@ const registerStep1 = asynchandler(async (req, res) => {
   if (!email || (!password && authProvider === "email")) {
     throw new Apierror(
       400,
-      "Email is required and password is required for email signup"
+      "Email is required and password is required for email signup",
     );
   }
 
@@ -69,7 +69,7 @@ const registerStep1 = asynchandler(async (req, res) => {
             password: await bcrypt.hash(tempPassword, 10),
             $setOnInsert: { registrationStep: 1 },
           },
-          { new: true, upsert: true }
+          { new: true, upsert: true },
         )
       : await Users.create({
           email,
@@ -87,8 +87,8 @@ const registerStep1 = asynchandler(async (req, res) => {
           authProvider: "linkedin",
           isRegistrationComplete: user.isRegistrationComplete,
         },
-        "Authentication successful"
-      )
+        "Authentication successful",
+      ),
     );
   }
 
@@ -100,7 +100,7 @@ const registerStep1 = asynchandler(async (req, res) => {
           authProvider: "email",
           $setOnInsert: { registrationStep: 1 },
         },
-        { new: true, upsert: true }
+        { new: true, upsert: true },
       )
     : await Users.create({
         email,
@@ -118,8 +118,8 @@ const registerStep1 = asynchandler(async (req, res) => {
         authProvider: "email",
         isRegistrationComplete: user.isRegistrationComplete,
       },
-      "Step 1 completed"
-    )
+      "Step 1 completed",
+    ),
   );
 });
 
@@ -169,7 +169,7 @@ const registerStep2 = asynchandler(async (req, res) => {
       }
 
       updatedUser.roles = Array.from(
-        new Set([...(updatedUser.roles || []), "professional", "asker"])
+        new Set([...(updatedUser.roles || []), "professional", "asker"]),
       );
     } else if (role === "asker") {
       if (!updatedUser.asker) {
@@ -177,7 +177,7 @@ const registerStep2 = asynchandler(async (req, res) => {
         updatedUser.asker = askerDoc._id;
       }
       updatedUser.roles = Array.from(
-        new Set([...(updatedUser.roles || []), "asker"])
+        new Set([...(updatedUser.roles || []), "asker"]),
       );
     }
 
@@ -190,7 +190,7 @@ const registerStep2 = asynchandler(async (req, res) => {
       }
       updatedUser.isAdmin = true;
       updatedUser.roles = Array.from(
-        new Set([...(updatedUser.roles || []), "admin"])
+        new Set([...(updatedUser.roles || []), "admin"]),
       );
     }
 
@@ -208,8 +208,8 @@ const registerStep2 = asynchandler(async (req, res) => {
           isRegistrationComplete: updatedUser.isRegistrationComplete,
           warning: "Role set but failed to create all role documents on server",
         },
-        "Role updated with warnings"
-      )
+        "Role updated with warnings",
+      ),
     );
   }
 
@@ -223,8 +223,8 @@ const registerStep2 = asynchandler(async (req, res) => {
         currentStep: updatedUser.registrationStep,
         isRegistrationComplete: updatedUser.isRegistrationComplete,
       },
-      "Role updated successfully"
-    )
+      "Role updated successfully",
+    ),
   );
 });
 
@@ -294,8 +294,19 @@ const registerStep3 = asynchandler(async (req, res) => {
   }
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
-    updatedUser._id
+    updatedUser._id,
   );
+
+  if (updatedUser.role === "asker") {
+    const welcomeHtml = welcomeEmailTemplate({
+      firstName: updatedUser.firstName,
+      role: "asker",
+      supportEmail: "admin@askmedirect.com",
+    });
+    sendEmail(updatedUser.email, "Welcome to AskMeDirect!", welcomeHtml).catch((err) =>
+      console.error("[Welcome email] failed to send:", err.message)
+    );
+  }
 
   return res.status(200).json(
     new Apiresponse(
@@ -307,8 +318,8 @@ const registerStep3 = asynchandler(async (req, res) => {
         currentStep: updatedUser.registrationStep,
         isRegistrationComplete: updatedUser.isRegistrationComplete,
       },
-      "Profile updated successfully"
-    )
+      "Profile updated successfully",
+    ),
   );
 });
 
@@ -342,7 +353,7 @@ const registerStep4 = asynchandler(async (req, res) => {
     await Users.findByIdAndUpdate(
       user._id,
       { $set: userUpdate },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
   }
 
@@ -389,7 +400,7 @@ const registerStep4 = asynchandler(async (req, res) => {
       professionalDoc = await Professional.findByIdAndUpdate(
         user.professional,
         { $set: profData },
-        { new: true, runValidators: true }
+        { new: true, runValidators: true },
       );
     } else {
       professionalDoc = await Professional.create({
@@ -404,16 +415,26 @@ const registerStep4 = asynchandler(async (req, res) => {
   }
 
   const sanitizedUser = await Users.findById(user._id).select(
-    "-password -refreshToken"
+    "-password -refreshToken",
   );
+
+  const welcomeHtml = welcomeEmailTemplate({
+    firstName: sanitizedUser.firstName,
+    role: "professional",
+    supportEmail: "admin@askmedirect.com",
+  });
+  sendEmail(sanitizedUser.email, "Welcome to AskMeDirect!", welcomeHtml).catch((err) =>
+    console.error("[Welcome email] failed to send:", err.message)
+  );
+
   return res
     .status(200)
     .json(
       new Apiresponse(
         200,
         { user: sanitizedUser, professional: professionalDoc },
-        "Step 4 saved"
-      )
+        "Step 4 saved",
+      ),
     );
 });
 
@@ -422,10 +443,10 @@ const registerStep5 = asynchandler(async (req, res) => {
   const paymentList = Array.isArray(req.body.paymentMethods)
     ? req.body.paymentMethods
     : req.body.paymentMethod
-    ? [req.body.paymentMethod]
-    : req.body.payment
-    ? [req.body.payment]
-    : [];
+      ? [req.body.paymentMethod]
+      : req.body.payment
+        ? [req.body.payment]
+        : [];
 
   if (!email) throw new Apierror(400, "Email is required");
 
@@ -442,7 +463,7 @@ const registerStep5 = asynchandler(async (req, res) => {
   }
 
   const sanitizedUser = await Users.findById(user._id).select(
-    "-password -refreshToken"
+    "-password -refreshToken",
   );
   return res
     .status(200)
@@ -450,8 +471,8 @@ const registerStep5 = asynchandler(async (req, res) => {
       new Apiresponse(
         200,
         { user: sanitizedUser, paymentMethods: created },
-        "Step 5 payment methods saved"
-      )
+        "Step 5 payment methods saved",
+      ),
     );
 });
 
@@ -463,7 +484,7 @@ const getRegistrationState = asynchandler(async (req, res) => {
   }
 
   const user = await Users.findOne({ email }).select(
-    "email registrationStep isRegistrationComplete role authProvider firstName lastName profilePic"
+    "email registrationStep isRegistrationComplete role authProvider firstName lastName profilePic",
   );
 
   if (!user) {
@@ -474,8 +495,8 @@ const getRegistrationState = asynchandler(async (req, res) => {
           exists: false,
           currentStep: 0,
         },
-        "No registration started with this email"
-      )
+        "No registration started with this email",
+      ),
     );
   }
 
@@ -487,8 +508,8 @@ const getRegistrationState = asynchandler(async (req, res) => {
         ...user.toObject(),
         currentStep: user.registrationStep,
       },
-      "Registration state retrieved"
-    )
+      "Registration state retrieved",
+    ),
   );
 });
 
@@ -509,7 +530,7 @@ const linkedinCallback = asynchandler(async (req, res) => {
         client_id: process.env.LINKEDIN_CLIENT_ID,
         client_secret: process.env.LINKEDIN_CLIENT_SECRET,
       }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     );
 
     const accessToken = tokenResponse.data.access_token;
@@ -517,7 +538,7 @@ const linkedinCallback = asynchandler(async (req, res) => {
 
     const userInfoResponse = await axios.get(
       "https://api.linkedin.com/v2/userinfo",
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
     console.log("functioon reaches here");
@@ -550,7 +571,7 @@ const linkedinCallback = asynchandler(async (req, res) => {
         profilePic: user.profilePic,
         authProvider: "linkedin",
       };
-      
+
       if (user.roles.includes("professional")) {
         const professional = await Professional.findOne({ user: user._id });
         if (professional) {
@@ -565,7 +586,7 @@ const linkedinCallback = asynchandler(async (req, res) => {
       user = await Users.findOneAndUpdate(
         { _id: user._id },
         { $set: updateFields },
-        { new: true }
+        { new: true },
       );
     }
 
@@ -578,8 +599,8 @@ const linkedinCallback = asynchandler(async (req, res) => {
           new Apiresponse(
             200,
             { user, accessToken, refreshToken },
-            "LinkedIn login successful"
-          )
+            "LinkedIn login successful",
+          ),
         );
     }
 
@@ -589,13 +610,13 @@ const linkedinCallback = asynchandler(async (req, res) => {
         {
           user,
         },
-        "LinkedIn authentication successful"
-      )
+        "LinkedIn authentication successful",
+      ),
     );
   } catch (error) {
     console.error(
       "LinkedIn OAuth error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Apierror(500, "LinkedIn authentication failed");
   }
@@ -609,7 +630,7 @@ const getLinkedInProfile = asynchandler(async (req, res) => {
   }
 
   const user = await Users.findOne({ email, authProvider: "linkedin" }).select(
-    "firstName lastName profilePic linkedinProfileUrl"
+    "firstName lastName profilePic linkedinProfileUrl",
   );
 
   if (!user) {
@@ -625,8 +646,8 @@ const getLinkedInProfile = asynchandler(async (req, res) => {
         profilePic: user.profilePic,
         linkedinProfileUrl: user.linkedinProfileUrl,
       },
-      "LinkedIn profile data retrieved"
-    )
+      "LinkedIn profile data retrieved",
+    ),
   );
 });
 
@@ -659,13 +680,13 @@ const Loginuser = asynchandler(async (req, res) => {
           currentStep: user.registrationStep,
           isRegistrationComplete: false,
         },
-        "Complete registration process"
-      )
+        "Complete registration process",
+      ),
     );
   }
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
-    user._id
+    user._id,
   );
 
   return res.status(200).json(
@@ -683,8 +704,8 @@ const Loginuser = asynchandler(async (req, res) => {
         accessToken,
         refreshToken,
       },
-      "Logged in successfully"
-    )
+      "Logged in successfully",
+    ),
   );
 });
 
@@ -692,7 +713,7 @@ const LogoutUser = asynchandler(async (req, res) => {
   const user = await Users.findByIdAndUpdate(
     req.user?._id,
     { $unset: { refreshToken: 1 }, isActive: false, lastActiveAt: new Date() },
-    { new: true }
+    { new: true },
   );
   if (!user) {
     throw new Apierror(400, "User not found");
@@ -706,6 +727,27 @@ const LogoutUser = asynchandler(async (req, res) => {
 
 const getCurrentUser = asynchandler(async (req, res) => {
   res.status(200).json(req.user);
+});
+
+
+const testSendEmail = asynchandler(async (req, res) => {
+  const to = req.body?.to || req.query?.to;
+  if (!to) throw new Apierror(400, "Recipient email (to) is required");
+
+  const subject = req.body?.subject || "AskMeDirect — Test email";
+  const html =
+    req.body?.html ||
+    `<div style="font-family: Arial, sans-serif;">
+       <h3>AskMeDirect — Test Email</h3>
+       <p>This is a test email ${'http://localhost:5173/resetPassword?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2YTIzMTM0ZWM0ODlmZjgxMTFjOTQ3NWMiLCJpYXQiOjE3ODE5NzQwNDksImV4cCI6MTc4MTk3NzY0OX0.b8I0DYpKyDfE-RYUtEgjTxc0jUYAIOLecufaA_o_4Bg'} sent from the server to verify email delivery.</p>
+       <p>If you received this, the email system is working.</p>
+     </div>`;
+
+  await sendEmail(to, subject, html);
+
+  return res
+    .status(200)
+    .json(new Apiresponse(200, null, `Test email sent to ${to}`));
 });
 
 const forgotPassword = asynchandler(async (req, res) => {
@@ -722,7 +764,7 @@ const forgotPassword = asynchandler(async (req, res) => {
   const resetToken = jwt.sign(
     { userId: user._id },
     process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: "1h" }
+    { expiresIn: "1h" },
   );
 
   user.resetPasswordToken = resetToken;
@@ -738,6 +780,9 @@ const forgotPassword = asynchandler(async (req, res) => {
     html: `<p>Click <a href="${resetLink}">here</a> to reset your password. This link will expire in 1 hour.</p>`,
   };
 
+  console.log(`Password reset link for ${user.email}: ${resetLink}`);
+
+  //uncomment it when sendgrid creds are available
   await sendEmail(mailOptions.to, mailOptions.subject, mailOptions.html);
   res
     .status(200)
@@ -826,7 +871,7 @@ const updateInfo = asynchandler(async (req, res) => {
   const updatedUser = await Users.findByIdAndUpdate(
     req.user._id,
     { $set: userUpdate },
-    { new: true, runValidators: true }
+    { new: true, runValidators: true },
   ).select("-password -refreshToken");
 
   if (!updatedUser) {
@@ -877,7 +922,7 @@ const updateInfo = asynchandler(async (req, res) => {
         updatedProfessional = await Professional.findByIdAndUpdate(
           updatedUser.professional,
           { $set: toSet },
-          { new: true, runValidators: true }
+          { new: true, runValidators: true },
         );
       } else {
         updatedProfessional = await Professional.create({
@@ -889,7 +934,7 @@ const updateInfo = asynchandler(async (req, res) => {
       }
     } else if (updatedUser.professional) {
       updatedProfessional = await Professional.findById(
-        updatedUser.professional
+        updatedUser.professional,
       );
     }
   }
@@ -911,7 +956,7 @@ const toggleActiveRole = asynchandler(async (req, res) => {
     user.activeRole = null;
     await user.save();
     const sanitized = await Users.findById(user._id).select(
-      "-password -refreshToken"
+      "-password -refreshToken",
     );
     return res
       .status(200)
@@ -933,7 +978,7 @@ const toggleActiveRole = asynchandler(async (req, res) => {
   }
 
   const updated = await Users.findById(user._id).select(
-    "-password -refreshToken"
+    "-password -refreshToken",
   );
   return res
     .status(200)
@@ -959,8 +1004,8 @@ const uploadFile = asynchandler(async (req, res) => {
       new Apiresponse(
         200,
         { url: publicUrl, key: uploadedFile.key, bucket: uploadedFile.bucket },
-        "File uploaded successfully"
-      )
+        "File uploaded successfully",
+      ),
     );
 });
 
@@ -987,7 +1032,7 @@ export const deleteProfessionalAccount = asynchandler(async (req, res) => {
   return res
     .status(200)
     .json(
-      new Apiresponse(200, null, "Professional account deleted successfully")
+      new Apiresponse(200, null, "Professional account deleted successfully"),
     );
 });
 
@@ -1041,8 +1086,8 @@ const toggleProfessionalStatus = asynchandler(async (req, res) => {
         professionalId: professional._id,
         featured: professional.featured,
       },
-      "Professional status updated successfully"
-    )
+      "Professional status updated successfully",
+    ),
   );
 });
 
@@ -1068,7 +1113,7 @@ const linkLinkedInAccount = asynchandler(async (req, res) => {
         client_id: process.env.LINKEDIN_CLIENT_ID,
         client_secret: process.env.LINKEDIN_CLIENT_SECRET,
       }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     );
 
     const accessToken = tokenResponse.data.access_token;
@@ -1076,7 +1121,7 @@ const linkLinkedInAccount = asynchandler(async (req, res) => {
     // Step 2: Fetch user info from LinkedIn
     const userInfoResponse = await axios.get(
       "https://api.linkedin.com/v2/userinfo",
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
     const userInfo = userInfoResponse.data;
@@ -1103,7 +1148,11 @@ const linkLinkedInAccount = asynchandler(async (req, res) => {
       profilePic: user.profilePic || profilePicUrl,
     };
 
-    await Users.findByIdAndUpdate(userId, { $set: updateFields }, { new: true });
+    await Users.findByIdAndUpdate(
+      userId,
+      { $set: updateFields },
+      { new: true },
+    );
 
     // Step 6: Mark the professional account as verified
     const professional = await Professional.findOne({ user: userId });
@@ -1112,17 +1161,19 @@ const linkLinkedInAccount = asynchandler(async (req, res) => {
       await professional.save();
     }
 
-    return res.status(200).json(
-      new Apiresponse(
-        200,
-        { user, professional },
-        "LinkedIn account linked successfully"
-      )
-    );
+    return res
+      .status(200)
+      .json(
+        new Apiresponse(
+          200,
+          { user, professional },
+          "LinkedIn account linked successfully",
+        ),
+      );
   } catch (error) {
     console.error(
       "LinkedIn OAuth error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Apierror(500, "Failed to link LinkedIn account");
   }
@@ -1146,5 +1197,6 @@ export {
   toggleActiveRole,
   getRegistrationState,
   linkedinCallback,
+  testSendEmail,
   getLinkedInProfile,
 };

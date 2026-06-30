@@ -1,52 +1,76 @@
-import { Professional } from "../models/Professional.model.js";
 import { Question } from "../models/Question.model.js";
-import { asynchandler } from "../utils/Asynchandler.js";
 import Stripe from "stripe";
+import { executePayout } from "../services/Payout.service.js";
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+const PLATFORM_FEE_PERCENT = parseFloat(process.env.PLATFORM_FEE_PERCENT || "12");
+
+/**
+ * Auto-close questions where the professional missed the answerBy deadline.
+ * Covers: quoted (professional never responded), awaiting_response (legacy status),
+ * and paid (professional accepted payment but never answered within the deadline).
+ * Triggers a Stripe refund to the asker for paid questions.
+ */
 export const autoCloseExpiredQuestions = async () => {
   const now = new Date();
   const expiredQuestions = await Question.find({
-    status: { $in: ["quoted", "awaiting_response"] },
+    status: { $in: ["quoted", "awaiting_response", "paid"] },
     answerBy: { $lt: now },
+    "flagging.isFlagged": { $ne: true },
   });
 
   console.log(
-    `Found ${expiredQuestions.length} expired questions to close. ${expiredQuestions}`
+    `[autoCloseExpiredQuestions] Found ${expiredQuestions.length} expired question(s) to close.`
   );
+
   for (const q of expiredQuestions) {
     q.status = "closed";
     q.thread.closedAt = now;
     q.timeline.push({ at: now, status: "auto_closed_due_to_no_answer" });
 
     if (q.payment.paid && q.payment.paymentReference) {
-      await stripe.refunds.create({
-        payment_intent: q.payment.paymentReference,
-        reason: "requested_by_customer",
-        metadata: { questionId: q._id.toString() },
-      });
-      q.payment.paid = false;
-      q.payment.refunded = true;
+      try {
+        await stripe.refunds.create({
+          payment_intent: q.payment.paymentReference,
+          reason: "requested_by_customer",
+          metadata: { questionId: q._id.toString() },
+        });
+        q.payment.paid = false;
+        q.payment.refunded = true;
+      } catch (refundErr) {
+        console.error(
+          `[autoCloseExpiredQuestions] Stripe refund failed for question ${q._id}:`,
+          refundErr
+        );
+      }
     }
+
     await q.save();
   }
 };
 
-//48 hours after answer
+/**
+ * Auto-close threads whose 48-hour follow-up window has expired.
+ * Covers two cases:
+ *   - status "answered": professional answered, asker never posted a follow-up within 48h
+ *   - status "in_thread": asker posted a follow-up but professional didn't reply within 48h
+ * In both cases the professional is owed their payout at the standard fee rate (no penalty,
+ * because the window expired naturally without an early-close action).
+ * Triggers executePayout which creates the correct invoice and sends emails.
+ */
 export const autoCloseExpiredThreads = async () => {
-  const PLATFORM_FEE_PERCENT = parseFloat(
-    process.env.PLATFORM_FEE_PERCENT || "12"
-  );
   const now = new Date();
   const expiredThreads = await Question.find({
-    status: { $in: ["in_thread"] },
+    status: { $in: ["answered", "in_thread"] },
     "thread.followUpWindowExpiresAt": { $lt: now },
     "payment.paid": true,
     "thread.threadClosedEarlier": false,
+    "flagging.isFlagged": { $ne: true },
   }).populate("professional");
 
   console.log(
-    `Found ${expiredThreads.length} expired threads to close. ${expiredThreads}`
+    `[autoCloseExpiredThreads] Found ${expiredThreads.length} expired thread(s) to close.`
   );
 
   for (const q of expiredThreads) {
@@ -55,89 +79,15 @@ export const autoCloseExpiredThreads = async () => {
     q.timeline.push({ at: now, status: "auto_closed_after_followup_window" });
     await q.save();
 
-    const payoutAmount = Math.round(
-      q.priceUSD * (1 - PLATFORM_FEE_PERCENT / 100)
-    );
-     
-    if (q.professional?.professionalStripeId) {
-      try {
-        const account = await stripe.accounts.retrieve(
-          q.professional.professionalStripeId
-        );
+    const payoutAmount = Math.round(q.priceUSD * (1 - PLATFORM_FEE_PERCENT / 100));
 
-        const payoutsEnabled = !!account.payouts_enabled;
-        const transfersActive = account.capabilities?.transfers === "active";
-
-        if (payoutsEnabled && transfersActive) {
-          try {
-            await stripe.transfers.create({
-              amount: Math.round(payoutAmount * 100),
-              currency: "usd",
-              destination: q.professional.professionalStripeId,
-              metadata: { questionId: q._id.toString() },
-            });
-            console.log(
-              `Auto payout of $${payoutAmount} to professional ${q.professional._id}`
-            );
-          } catch (txErr) {
-            console.error(
-              `Auto payout transfer failed for question ${q._id}, saving to pendingPayouts:`,
-              txErr
-            );
-            await Professional.findByIdAndUpdate(q.professional._id, {
-              $push: {
-                pendingPayouts: {
-                  amount: payoutAmount,
-                  questionId: q._id,
-                  timestamp: new Date(),
-                  paid: false,
-                },
-              },
-            });
-          }
-        } else {
-          console.log(
-            `Stripe account ${q.professional.professionalStripeId} not ready for payouts. Saving pending payout.`
-          );
-          await Professional.findByIdAndUpdate(q.professional._id, {
-            $push: {
-              pendingPayouts: {
-                amount: payoutAmount,
-                questionId: q._id,
-                timestamp: new Date(),
-                paid: false,
-              },
-            },
-          });
-        }
-      } catch (accErr) {
-        console.error(
-          `Failed to retrieve Stripe account for professional ${q.professional._id}. Saving pending payout.`,
-          accErr
-        );
-        await Professional.findByIdAndUpdate(q.professional._id, {
-          $push: {
-            pendingPayouts: {
-              amount: payoutAmount,
-              questionId: q._id,
-              timestamp: new Date(),
-              paid: false,
-            },
-          },
-        });
-      }
-    } else {
-      // no stripe account -> add to pending
-      await Professional.findByIdAndUpdate(q.professional._id, {
-        $push: {
-          pendingPayouts: {
-            amount: payoutAmount,
-            questionId: q._id,
-            timestamp: new Date(),
-            paid: false,
-          },
-        },
-      });
+    try {
+      await executePayout(q, payoutAmount, false);
+    } catch (err) {
+      console.error(
+        `[autoCloseExpiredThreads] executePayout failed for question ${q._id}:`,
+        err
+      );
     }
   }
 };

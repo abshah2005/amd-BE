@@ -18,7 +18,8 @@ import {
   getPaymentOptions,
   listQuestionsByUserType,
   reviewFlaggedQuestion,
-  flagQuestion
+  flagQuestion,
+  getAllFlaggedQuestions,
 } from "../Controllers/Questions.Controller.js";
 import { verifyJWT,trackActive, verifyAdmin } from "../middlewares/Authentication.middleware.js";
 import { upload } from "../middlewares/Multer.middleware.js";
@@ -39,6 +40,7 @@ router.post("/:id/followup", verifyJWT, trackActive,upload.fields([{ name: "atta
 router.post("/:id/close", verifyJWT, trackActive,closeThreadAndPayout);
 router.get("/", verifyJWT, trackActive,listQuestions);
 router.get("/getQuestions",listQuestionsByUserType);
+router.get("/flagged", verifyJWT, verifyAdmin, getAllFlaggedQuestions);
 router.post("/:id/answer-followup", verifyJWT, trackActive,upload.fields([{ name: "attachments", maxCount: 5 }]), answerFollowUp);
 router.post("/:id/feedback", verifyJWT, trackActive,submitFeedback);
 router.get("/:id",verifyJWT,trackActive,getQuestionById);

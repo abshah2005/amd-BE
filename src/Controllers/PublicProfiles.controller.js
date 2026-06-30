@@ -28,20 +28,36 @@ const getProfessionalByFullName = asynchandler(async (req, res) => {
     throw new Apierror(400, "Full name is required");
   }
 
-  fullName = fullName.replace(/[-_]/g, " ").replace(/\s+/g, " ").trim();
+  // Normalize: lowercase and treat - same as _
+  const slug = fullName.toLowerCase().trim().replace(/-/g, "_");
 
-  const parts = fullName.split(" ");
-  if (parts.length < 2) {
+  if (!slug.includes("_")) {
     throw new Apierror(400, "Full name must include first and last name");
   }
-  const firstName = parts[0];
-  const lastName = parts.slice(1).join(" ");
 
-  const user = await Users.findOne({
-    firstName: new RegExp(`^${firstName}$`, "i"),
-    lastName: new RegExp(`^${lastName}$`, "i"),
-    roles: "professional",
+  // Strip spaces from each DB name field and join with _ to match the slug format
+  const stripSpaces = (field) => ({
+    $reduce: {
+      input: { $split: [field, " "] },
+      initialValue: "",
+      in: { $concat: ["$$value", "$$this"] },
+    },
   });
+
+  const [user] = await Users.aggregate([
+    { $match: { roles: "professional" } },
+    {
+      $addFields: {
+        nameSlug: {
+          $toLower: {
+            $concat: [stripSpaces("$firstName"), "_", stripSpaces("$lastName")],
+          },
+        },
+      },
+    },
+    { $match: { nameSlug: slug } },
+    { $limit: 1 },
+  ]);
 
   if (!user) {
     throw new Apierror(404, "Professional not found");
@@ -146,16 +162,28 @@ const listProfessionals = asynchandler(async (req, res) => {
     nameRegex = new RegExp(String(name).trim(), "i");
   }
 
-  // tags: comma separated -> require all selected tags to be present
+  // tags: comma separated -> require all selected tags to be present (case + space insensitive)
+  const buildTagRegex = (t) => {
+    // strip ALL spaces from search term, then allow \s* between every character
+    // so "ailover", "ai lover", "AI Lover" all match each other
+    const stripped = t.trim().toLowerCase().replace(/\s+/g, "");
+    const escaped = stripped.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`^${escaped.split("").join("\\s*")}$`, "i");
+  };
+
   if (req.query.tags) {
     const tagsArr = String(req.query.tags)
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-    if (tagsArr.length) matchClauses.push({ tags: { $all: tagsArr } });
+    if (tagsArr.length) {
+      tagsArr.forEach((t) => {
+        matchClauses.push({ tags: { $elemMatch: { $regex: buildTagRegex(t) } } });
+      });
+    }
   } else if (tag) {
     // backward-compat single tag param
-    matchClauses.push({ tags: String(tag) });
+    matchClauses.push({ tags: { $elemMatch: { $regex: buildTagRegex(String(tag)) } } });
   }
 
   if (country || req.query.country) {

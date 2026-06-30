@@ -138,10 +138,15 @@ const UserSchema = new Schema(
 
     isAskerDeleted: { type: Boolean, default: false },
     isProDeleted: { type: Boolean, default: false },
+    // Flags set when deletion was requested by an administrator.
+    // If true user cannot cancel the scheduled deletion (admin must cancel or finalize).
+    isAskerDeletedByAdmin: { type: Boolean, default: false },
+    isProDeletedByAdmin: { type: Boolean, default: false },
     deletionScheduledAt: { type: Date },
     // For GDPR compliance
     anonymizedAt: { type: Date },
-
+    // optional: who requested admin deletion (admin user id)
+    adminRequestedDeletionBy: { type: mongoose.Schema.Types.ObjectId, ref: "Users", default: null },
     linkedinId: {
       type: String,
       unique: true,

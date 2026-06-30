@@ -21,22 +21,28 @@ export const sendEmail = async (to, subject, html) => {
   }
 };
 
-function shouldSkipEmail(status, recipientType) {
-  // Define combinations of status and recipient type for which emails should be skipped
-  const skipCombinations = [
-    // Skip "Question Approved" email for professionals
-    { status: "approved", recipientType: "professional" },
-    
-    // Skip "Payment Pending" email for professionals
-    { status: "awaiting_payment", recipientType: "professional" },
-    
-    // Add more combinations here as needed
-    // { status: "status_name", recipientType: "asker_or_professional" },
-  ];
+export const sendInvoiceEmail = (to, subject, html) => {
+  if (!to) {
+    console.warn("[sendInvoiceEmail] no recipient, skipping email");
+    return;
+  }
+  sendEmail(to, subject, html)
+    .then(() => console.log(`[InvoiceEmail] sent to ${to}`))
+    .catch((err) =>
+      console.error(`[InvoiceEmail] failed to send to ${to}:`, err.message || err)
+    );
+};
 
-  return skipCombinations.some(
-    combo => combo.status === status && combo.recipientType === recipientType
-  );
+// EMAIL_SKIP_CONFIG — set a recipient key to true to suppress that email.
+// Callers can override per-call by passing enabled: false (or enabled: true to force).
+const EMAIL_SKIP_CONFIG = {
+  approved:         { professional: true  },  // pro approved it themselves, no need to notify
+  awaiting_payment: { professional: true  },  // pro doesn't need a "payment pending" nudge
+  // submitted:     { asker: false },         // example: un-comment to re-enable
+};
+
+function shouldSkipEmail(status, recipientType) {
+  return EMAIL_SKIP_CONFIG[status]?.[recipientType] === true;
 }
 
 export const sendQuestionStatusEmail = async (options) => {
@@ -47,6 +53,7 @@ export const sendQuestionStatusEmail = async (options) => {
     recipient,
     customMessage,
     actionUrl,
+    enabled,  // pass true to force-send, false to force-skip, omit to use EMAIL_SKIP_CONFIG
   } = options;
 
   if (!recipient || !recipient.email) {
@@ -54,8 +61,13 @@ export const sendQuestionStatusEmail = async (options) => {
     return;
   }
 
-  if (shouldSkipEmail(status, recipientType)) {
-    console.log(`Skipping email for status: ${status} and recipient: ${recipientType}`);
+  if (enabled === false) {
+    console.log(`[Email] force-skipped — status: ${status}, recipient: ${recipientType}`);
+    return;
+  }
+
+  if (enabled !== true && shouldSkipEmail(status, recipientType)) {
+    console.log(`[Email] skipped by config — status: ${status}, recipient: ${recipientType}`);
     return;
   }
 
@@ -102,14 +114,8 @@ export const sendQuestionStatusEmail = async (options) => {
         ${customMessage ? `<p>${customMessage}</p>` : ""}
         
         <div style="margin: 25px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #007bff; border-radius: 3px;">
-          <p style="margin: 0; font-weight: bold;">Question: ${
-            question.title
-          }</p>
-          ${
-            question.price
-              ? `<p style="margin: 5px 0 0 0;">Paid: $${question.price}</p>`
-              : ""
-          }
+          <p style="margin: 0; font-weight: bold;">Question: ${escapeHtml(stripHtml(question.title))}</p>
+          ${question.price ? `<p style="margin: 5px 0 0 0;">Paid: $${question.price}</p>` : ""}
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
@@ -125,7 +131,7 @@ export const sendQuestionStatusEmail = async (options) => {
       
       <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777; text-align: center;">
         <p>If you have any questions, please contact our support team at ${
-          process.env.SUPPORT_EMAIL || "support@askmedirect.com"
+          process.env.SUPPORT_EMAIL || "admin@askmedirect.com"
         }</p>
       </div>
     </div>
@@ -358,4 +364,470 @@ function getEmailConfigByStatus(
 
   // Return the appropriate config or undefined if not found
   return configs[status]?.[recipientType];
+}
+
+
+export function paymentReceivedTemplate({ logoUrl, askerName, invoiceNumber, invoiceDate, questionTitle: _qtr, subtotalUSD, invoiceUrl, supportEmail }) {
+  const questionTitle = stripHtml(_qtr);
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payment Received - AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#0070F3 0%,#6C63FF 100%);padding:0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:28px 32px 18px;">
+            <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Professional answers, on demand</div>
+          </td>
+          <td align="right" style="padding:28px 32px 18px;">
+            <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
+              <div style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.2px;">Invoice</div>
+              <div style="font-size:14px;font-weight:700;color:#ffffff;margin-top:3px;">${invoiceNumber || '—'}</div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:0 32px 0;">
+            <div style="background:rgba(255,255,255,0.12);border-radius:6px 6px 0 0;padding:9px 16px;display:inline-block;">
+              <span style="font-size:13px;color:#fff;font-weight:600;">&#10003; &nbsp;Payment Confirmed</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- BODY -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:19px;font-weight:700;color:#1a202c;">Hello ${escapeHtml(askerName) || 'Customer'},</p>
+      <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.7;">Thank you for your payment. Your transaction has been processed successfully and is confirmed below.</p>
+
+      <!-- META PILLS -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+        <tr>
+          <td width="49%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;">
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Date</div>
+            <div style="font-size:14px;color:#1a202c;font-weight:600;margin-top:5px;">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</div>
+          </td>
+          <td width="2%"></td>
+          <td width="49%" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 16px;">
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Status</div>
+            <div style="font-size:14px;color:#16a34a;font-weight:700;margin-top:5px;">&#10003; Paid</div>
+          </td>
+        </tr>
+      </table>
+
+      <!-- LINE ITEMS -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <tr style="background:#f8fafc;">
+          <th align="left" style="padding:11px 16px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:600;border-bottom:1px solid #e2e8f0;">Description</th>
+          <th align="right" style="padding:11px 16px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:600;border-bottom:1px solid #e2e8f0;">Amount (USD)</th>
+        </tr>
+        <tr>
+          <td style="padding:16px;font-size:14px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(questionTitle || '—')}</td>
+          <td align="right" style="padding:16px;font-size:14px;color:#374151;border-bottom:1px solid #f1f5f9;">${formatUSD(subtotalUSD)}</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:15px 16px;font-size:14px;font-weight:700;color:#1a202c;">Total Received</td>
+          <td align="right" style="padding:15px 16px;">
+            <span style="font-size:22px;font-weight:800;color:#0070F3;">${formatUSD(subtotalUSD)}</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px 32px;" align="center">
+      <a href="${invoiceUrl || '#'}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#0070F3,#6C63FF);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        View Invoice &rarr;
+      </a>
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">Need help? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a> &nbsp;&middot;&nbsp; AskMeDirect</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+export function payoutPendingTemplate({ logoUrl, proName, invoiceNumber, invoiceDate, questionTitle: _qtp, payoutAmountUSD, invoiceUrl, supportEmail }) {
+  const questionTitle = stripHtml(_qtp);
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payout Pending - AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#d97706 0%,#ef4444 100%);padding:0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:28px 32px 18px;">
+            <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Professional answers, on demand</div>
+          </td>
+          <td align="right" style="padding:28px 32px 18px;">
+            <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
+              <div style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.2px;">Reference</div>
+              <div style="font-size:14px;font-weight:700;color:#ffffff;margin-top:3px;">${invoiceNumber || '—'}</div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:0 32px 0;">
+            <div style="background:rgba(255,255,255,0.12);border-radius:6px 6px 0 0;padding:9px 16px;display:inline-block;">
+              <span style="font-size:13px;color:#fff;font-weight:600;">&#9200; &nbsp;Payout Pending</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- BODY -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:19px;font-weight:700;color:#1a202c;">Hi ${escapeHtml(proName) || 'Professional'},</p>
+      <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.7;">A payout for the question below could not be sent immediately and has been recorded as <strong style="color:#d97706;">pending</strong>. We will attempt the transfer again once your Stripe account is ready.</p>
+
+      <!-- DETAILS TABLE -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <tr style="background:#fffbeb;">
+          <td style="padding:13px 16px;font-size:12px;font-weight:600;color:#92400e;text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid #fde68a;" colspan="2">Payout Details</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;width:40%;border-bottom:1px solid #f1f5f9;">Question</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(questionTitle || '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #f1f5f9;">Date</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:16px;font-size:14px;font-weight:700;color:#1a202c;">Amount Pending</td>
+          <td align="right" style="padding:16px;">
+            <span style="font-size:22px;font-weight:800;color:#d97706;">${formatUSD(payoutAmountUSD)}</span>
+          </td>
+        </tr>
+      </table>
+
+      <!-- INFO BOX -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;margin-bottom:8px;">
+        <tr>
+          <td style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;"><strong>What happens next?</strong> Ensure your Stripe account is fully verified and able to receive transfers. We will automatically retry the payout once everything is in order.</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px 32px;" align="center">
+      <a href="${invoiceUrl || '#'}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#d97706,#ef4444);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        View Pending Payout &rarr;
+      </a>
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">Questions? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a> &nbsp;&middot;&nbsp; AskMeDirect</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+export function payoutSentTemplate({ logoUrl, proName, invoiceNumber, invoiceDate, questionTitle: _qts, payoutAmountUSD, transferId, invoiceUrl, supportEmail }) {
+  const questionTitle = stripHtml(_qts);
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || 'admin@askmedirect.com');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payout Sent - AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#059669 0%,#0070F3 100%);padding:0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:28px 32px 18px;">
+            <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:3px;">Professional answers, on demand</div>
+          </td>
+          <td align="right" style="padding:28px 32px 18px;">
+            <div style="background:rgba(255,255,255,0.18);border-radius:8px;padding:10px 16px;text-align:center;">
+              <div style="font-size:10px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.2px;">Reference</div>
+              <div style="font-size:14px;font-weight:700;color:#ffffff;margin-top:3px;">${invoiceNumber || '—'}</div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:0 32px 0;">
+            <div style="background:rgba(255,255,255,0.12);border-radius:6px 6px 0 0;padding:9px 16px;display:inline-block;">
+              <span style="font-size:13px;color:#fff;font-weight:600;">&#10003; &nbsp;Payout Sent</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- BODY -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:19px;font-weight:700;color:#1a202c;">Hello ${escapeHtml(proName) || 'Professional'},</p>
+      <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.7;">Great news — your payout has been <strong style="color:#059669;">successfully processed</strong> and is on its way to your Stripe account.</p>
+
+      <!-- DETAILS TABLE -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <tr style="background:#f0fdf4;">
+          <td style="padding:13px 16px;font-size:12px;font-weight:600;color:#166534;text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid #bbf7d0;" colspan="2">Payout Details</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;width:40%;border-bottom:1px solid #f1f5f9;">Question</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(questionTitle || '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #f1f5f9;">Transfer ID</td>
+          <td align="right" style="padding:14px 16px;font-size:12px;color:#374151;font-family:monospace;border-bottom:1px solid #f1f5f9;">${escapeHtml(transferId || '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;font-weight:600;color:#64748b;border-bottom:1px solid #f1f5f9;">Date</td>
+          <td align="right" style="padding:14px 16px;font-size:13px;color:#374151;border-bottom:1px solid #f1f5f9;">${escapeHtml(invoiceDate || new Date().toLocaleDateString())}</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:16px;font-size:14px;font-weight:700;color:#1a202c;">Amount Paid</td>
+          <td align="right" style="padding:16px;">
+            <span style="font-size:22px;font-weight:800;color:#059669;">${formatUSD(payoutAmountUSD)}</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px 32px;" align="center">
+      <a href="${invoiceUrl || '#'}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#059669,#0070F3);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        View Payout Invoice &rarr;
+      </a>
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">Questions? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a> &nbsp;&middot;&nbsp; AskMeDirect</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+
+// small helpers used by templates
+export function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export function stripHtml(html) {
+  if (!html) return "";
+  return String(html)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+export function formatUSD(n) {
+  const num = Number(n || 0);
+  return `$${num.toFixed(2)}`;
+}
+
+export function welcomeEmailTemplate({ firstName, role, supportEmail }) {
+  const support = escapeHtml(supportEmail || process.env.SUPPORT_EMAIL || "admin@askmedirect.com");
+  const baseUrl = process.env.FRONTEND_URL || "#";
+  const isPro = role === "professional";
+
+  const ctaLabel = isPro ? "Go to Dashboard" : "Browse Professionals";
+  const ctaUrl   = isPro ? `${baseUrl}/dashboard` : `${baseUrl}`;
+  const headerTag = isPro ? "Professional Account" : "Asker Account";
+
+  const stepsHtml = isPro
+    ? `
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">1</span>
+        <strong>Your profile is live</strong> — askers can already discover you based on your expertise, tags, and price range.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">2</span>
+        <strong>We'll notify you by email</strong> — whenever a new question arrives, you'll get an instant notification.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">3</span>
+        <strong>Approve, quote, or decline</strong> — you're always in control. Review each question and respond on your terms.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">4</span>
+        <strong>Build your reputation</strong> — great answers earn great reviews and keep askers coming back.
+      </td></tr>`
+    : `
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">1</span>
+        <strong>Browse professionals</strong> — filter by expertise, language, location, and price range to find the right fit.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">2</span>
+        <strong>Write your question</strong> — be as specific as you need. The more context you share, the better the answer.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">3</span>
+        <strong>Set your price or request a quote</strong> — pay what you're comfortable with, or let the professional suggest a rate.
+      </td></tr>
+      <tr><td style="padding:6px 0;font-size:14px;color:#374151;line-height:1.6;">
+        <span style="display:inline-block;width:22px;height:22px;background:#0070F3;color:#fff;border-radius:50%;text-align:center;font-size:12px;font-weight:700;line-height:22px;margin-right:10px;vertical-align:middle;">4</span>
+        <strong>Get a private, thoughtful answer</strong> — all responses are confidential and delivered directly to you.
+      </td></tr>`;
+
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Welcome to AskMeDirect</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#0070F3 0%,#6C63FF 100%);padding:36px 32px 28px;text-align:center;">
+      <div style="font-size:26px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">AskMeDirect</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.75);margin-top:4px;letter-spacing:0.5px;">Professional answers, on demand</div>
+      <div style="margin-top:18px;display:inline-block;background:rgba(255,255,255,0.18);border-radius:20px;padding:5px 16px;">
+        <span style="font-size:12px;color:#fff;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;">${escapeHtml(headerTag)}</span>
+      </div>
+    </td>
+  </tr>
+
+  <!-- GREETING -->
+  <tr>
+    <td style="padding:32px 32px 0;">
+      <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#1a202c;">Welcome aboard, ${escapeHtml(firstName) || "there"}! &#127881;</p>
+      <p style="margin:0 0 24px;font-size:14px;color:#64748b;line-height:1.7;">
+        ${isPro
+          ? "You're all set! Your professional profile is live on AskMeDirect. People with real questions are already looking for experts like you — sit back and let the questions come to you."
+          : "Your AskMeDirect account is ready. Skip the endless Googling — get clear, private answers from vetted professionals who've actually been there."}
+      </p>
+    </td>
+  </tr>
+
+  <!-- WHAT'S NEXT -->
+  <tr>
+    <td style="padding:0 32px;">
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:20px 22px;">
+        <p style="margin:0 0 14px;font-size:13px;font-weight:700;color:#0070F3;text-transform:uppercase;letter-spacing:1px;">What to do next</p>
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${stepsHtml}
+        </table>
+      </div>
+    </td>
+  </tr>
+
+  <!-- CTA -->
+  <tr>
+    <td style="padding:28px 32px;" align="center">
+      <a href="${ctaUrl}" target="_blank" rel="noopener"
+         style="display:inline-block;background:linear-gradient(135deg,#0070F3,#6C63FF);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 44px;border-radius:8px;">
+        ${escapeHtml(ctaLabel)} &rarr;
+      </a>
+    </td>
+  </tr>
+
+  <!-- SPAM NOTICE -->
+  <tr>
+    <td style="padding:0 32px 28px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;">
+              <strong>&#9993; Keep our emails out of spam</strong> — please add
+              <strong>${support}</strong> to your contacts or mark it as
+              <em>Not Spam</em> if it lands in your junk folder. We'll use this
+              address to send you important notifications and updates.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;">
+        Need help? <a href="mailto:${support}" style="color:#0070F3;text-decoration:none;">${support}</a>
+        &nbsp;&middot;&nbsp; AskMeDirect &nbsp;&middot;&nbsp;
+        <a href="${baseUrl}" style="color:#0070F3;text-decoration:none;">askmedirect.com</a>
+      </p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
 }

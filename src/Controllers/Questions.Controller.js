@@ -7,6 +7,8 @@ import { Apierror } from "../utils/Apierror.js";
 import { handleAttachments } from "../utils/Attachments.js";
 import { Feedback } from "../models/FeedbackSchema.model.js";
 import Stripe from "stripe";
+import { createPaymentReceivedInvoice } from "../services/Invoice.service.js";
+import { executePayout } from "../services/Payout.service.js";
 import { sendQuestionStatusEmail } from "../utils/Nodemailer.js";
 import { Asker } from "../models/Asker.model.js";
 import { Admin } from "../models/Admin.model.js";
@@ -24,6 +26,49 @@ const PLATFORM_FEE_PERCENT = parseFloat(
 const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
   process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
 );
+
+// helper: send flagged-question emails to all admins + professional + asker
+async function notifyAdminsAboutFlaggedQuestion(question, flaggedByType, reason) {
+  await question.populate([
+    { path: "professional", populate: { path: "user", select: "firstName lastName email" } },
+    { path: "asker" },
+  ]);
+
+  const allAdmins = await Admin.find({}).populate("user", "firstName lastName email");
+  const customMessage = `Flagged by ${flaggedByType}. Reason: ${reason}`;
+
+  for (const admin of allAdmins) {
+    if (admin.user?.email) {
+      sendQuestionStatusEmail({
+        recipientType: "admin",
+        status: "flagged",
+        question,
+        recipient: admin.user,
+        customMessage,
+      }).catch((err) => console.error("Email to admin failed:", err));
+    }
+  }
+
+  const professionalUser = question.professional?.user;
+  if (professionalUser?.email) {
+    sendQuestionStatusEmail({
+      recipientType: "professional",
+      status: "flagged",
+      question,
+      recipient: professionalUser,
+    }).catch((err) => console.error("Email to professional failed:", err));
+  }
+
+  const asker = question.asker;
+  if (asker?.email) {
+    sendQuestionStatusEmail({
+      recipientType: "asker",
+      status: "flagged",
+      question,
+      recipient: asker,
+    }).catch((err) => console.error("Email to asker failed:", err));
+  }
+}
 
 // helper: populate users and send emails to both parties (non-blocking)
 async function notifyStatusChange(question, status, customMessage, actionUrl) {
@@ -52,6 +97,7 @@ async function notifyStatusChange(question, status, customMessage, actionUrl) {
         recipient: asker,
         customMessage,
         actionUrl,
+        
       }).catch((err) => console.error("Email to asker failed:", err));
     }
 
@@ -382,102 +428,6 @@ export const payQuestion = asynchandler(async (req, res) => {
     );
 });
 
-// export const payQuestion = asynchandler(async (req, res) => {
-//   const { id } = req.params;
-//   const { deliveryType, selectedCurrency = "usd" } = req.body;
-//   const q = await Question.findById(id).populate("professional");
-//   if (!q) throw new Apierror(404, "Question not found");
-//   if (String(q.asker) !== String(req.user._id))
-//     throw new Apierror(403, "Not asker");
-//   if (
-//     q.status !== "approved" &&
-//     q.status !== "quoted" &&
-//     q.status !== "awaiting_payment"
-//   )
-//     throw new Apierror(400, "Not approved or quoted yet");
-
-//   let priceUSD = 0;
-//   if (deliveryType === "fast" && q.quote.fast?.amount) {
-//     priceUSD = q.quote.fast.amount;
-//     q.deliveryType = "fast";
-//     if (q.answerByFast) q.answerBy = q.answerByFast;
-//   } else if (deliveryType === "normal" && q.quote.normal?.amount) {
-//     priceUSD = q.quote.normal.amount;
-//     q.deliveryType = "normal";
-//     if (q.answerByNormal) q.answerBy = q.answerByNormal;
-//   } else {
-//     throw new Apierror(400, "Invalid delivery type or quote not available");
-//   }
-//   // q.price = price;
-//   q.priceUSD = priceUSD;
-//   q.price=priceUSD;
-//   const exchangeRates = await fetchExchangeRates("USD");
-
-//   const rate = exchangeRates[selectedCurrency.toUpperCase()] || 1;
-//   const priceInSelectedCurrency = Math.round(priceUSD * rate * 100) / 100;
-
-//   const paymentIntent = await stripe.paymentIntents.create({
-//     amount: Math.round(priceInSelectedCurrency * 100),
-//     currency: selectedCurrency.toLowerCase(),
-//     metadata: { questionId: q._id.toString(), priceUSD: priceUSD.toString() },
-//   });
-
-//   q.payment = {
-//     paid: false,
-//     paymentProvider: "stripe",
-//     paymentReference: paymentIntent.id,
-//     amountUSD: priceUSD,
-//     paidCurrency: selectedCurrency,
-//     paidAmount: priceInSelectedCurrency,
-//   };
-//   q.status = "awaiting_payment";
-//   const hasPaymentAwaitingEntry = q.timeline.some(
-//     entry => entry.status === "payment_awaiting"
-//   );
-//   if (!hasPaymentAwaitingEntry) {
-//     q.timeline.push({
-//       at: new Date(),
-//       status: "payment_awaiting",
-//       by: req.user._id,
-//       note: `Tap 'Pay Now' to confirm question's budget for ${deliveryType} delivery.`,
-//     });
-//   }
-
-//   await q.save();
-//   if(!hasPaymentAwaitingEntry){
-//     notifyStatusChange(q, "awaiting_payment").catch(() => {});
-//   }
-//   return res.status(200).json(
-//     new Apiresponse(
-//       200,
-//       {
-//         clientSecret: paymentIntent.client_secret,
-//         priceUSD,
-//         availableCurrencies:
-//         [
-//           {
-//           code: "usd",
-//           rate: 1, // Base rate
-//           symbol: "$",
-//           convertedAmount: priceUSD
-//         },
-//         ...Object.keys(exchangeRates)
-//           .filter((code) =>
-//             ["EUR", "GBP", "CAD", "AUD", "HUF"].includes(code)
-//           )
-//           .map((code) => ({
-//             code: code.toLowerCase(),
-//             rate: exchangeRates[code],
-//             symbol: getSymbolFromCurrencyCode(code.toLowerCase()),
-//             convertedAmount:
-//               Math.round(priceUSD * exchangeRates[code] * 100) / 100,
-//           }))
-//         ]
-//       },
-//       "Payment initiated"
-//     )
-//   );
-// });
 
 export const paidStatusQuestion = asynchandler(async (req, res) => {
   const { id } = req.params;
@@ -493,9 +443,21 @@ export const paidStatusQuestion = asynchandler(async (req, res) => {
       by: q.asker,
       note: "Your payment is complete! 🎉 We've notified the professional — they'll review your question and respond within the selected delivery time.",
     });
+    
     await q.save();
   }
 
+  try {
+    const invoice = await createPaymentReceivedInvoice(q);
+    if (invoice) {
+      // Persist invoice reference on question if service didn't already set it
+      q.payment.invoiceId = invoice._id;
+      q.payment.invoiceUrl = q.payment.invoiceUrl || invoice.publicToken ? `${process.env.APP_BASE_URL || "https://yourapp.com"}/invoices/view/${invoice.publicToken}` : q.payment.invoiceUrl;
+    }
+  } catch (err) {
+    console.error("Failed to create payment-received invoice:", err);
+  }
+   
   await q.save();
   notifyStatusChange(q, "paid").catch(() => {});
   return res.status(200).json(new Apiresponse(200, q, "Question paid"));
@@ -535,15 +497,15 @@ export const stripeWebhook = asynchandler(async (req, res) => {
   res.status(200).send("Received");
 });
 
+
 export const postAnswer = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
-  console.log(body);
   let attachmentsList = [];
 
-  const q = await Question.findById(id);
+  const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
-  if (String(q.professional) !== String(req.user.professional._id))
+  if (String(q.professional._id) !== String(req.user.professional._id))
     throw new Apierror(403, "Not professional");
 
   if (req.files?.attachments) {
@@ -552,20 +514,47 @@ export const postAnswer = asynchandler(async (req, res) => {
       ? q.attachments.concat(attachmentsList)
       : attachmentsList;
   }
-  console.log(attachmentsList);
 
   if (q.status === "paid" || q.status === "awaiting_response") {
+    // Initial answer
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body: body,
+      body,
       attachments: attachmentsList,
       isFollowUp: false,
     });
     q.status = "answered";
     q.thread.followUpWindowExpiresAt = new Date(Date.now() + 48 * 3600 * 1000);
-  } else if (q.status === "in_thread" || q.status === "answered") {
-    // Follow-up answer logic
+    q.timeline.push({
+      at: new Date(),
+      status: "answered",
+      by: req.user._id,
+      note: "Question answered by professional.",
+    });
+
+    await q.save();
+    notifyStatusChange(q, "answered").catch(() => {});
+    return res.status(200).json(new Apiresponse(200, q, "Answer posted successfully"));
+
+  } else if (q.status === "answered") {
+    // Professional appending a supplemental message after their initial answer,
+    // before the asker has posted a follow-up. Status and follow-up window stay unchanged.
+    q.thread.messages.push({
+      sender: req.user._id,
+      role: "professional",
+      body,
+      attachments: attachmentsList,
+      isFollowUp: false,
+    });
+    await q.save();
+    notifyStatusChange(q, "answered").catch(() => {});
+    return res.status(200).json(new Apiresponse(200, q, "Supplemental answer posted"));
+
+  } else if (q.status === "in_thread") {
+    // Follow-up answer
+    const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS || "1");
+
     if (
       !q.thread.followUpWindowExpiresAt ||
       new Date() > new Date(q.thread.followUpWindowExpiresAt)
@@ -575,21 +564,48 @@ export const postAnswer = asynchandler(async (req, res) => {
     q.thread.messages.push({
       sender: req.user._id,
       role: "professional",
-      body: body,
+      body,
       attachments: attachmentsList,
       isFollowUp: true,
     });
+    // q.timeline.push({
+    //   at: new Date(),
+    //   status: "followup_answered",
+    //   by: req.user._id,
+    //   note: `Follow-up question #${q.thread.followUpCount} answered.`,
+    // });
+
+    if (q.thread.followUpCount >= MAX_FOLLOWUPS) {
+      // All follow-ups exhausted — close the thread
+      q.status = "closed";
+      q.thread.closedAt = new Date();
+      q.timeline.push({
+        at: new Date(),
+        status: "closed",
+        by: req.user._id,
+        note: "Thread closed after all follow-ups answered.",
+      });
+      await q.save();
+      notifyStatusChange(q, "closed").catch(() => {});
+
+      // Professional fulfilled all obligations: pay out at the standard fee, no penalty
+      const payoutAmount = Math.round(q.priceUSD * (1 - PLATFORM_FEE_PERCENT / 100));
+      executePayout(q, payoutAmount, false).catch((err) =>
+        console.error(`[postAnswer] Payout failed for exhausted thread ${q._id}:`, err)
+      );
+
+      return res.status(200).json(new Apiresponse(200, q, "Follow-up answered and thread closed"));
+    } else {
+      // More follow-ups still available
+      q.status = "answered";
+      await q.save();
+      notifyStatusChange(q, "answered").catch(() => {});
+      return res.status(200).json(new Apiresponse(200, q, "Follow-up answered, thread still open"));
+    }
+
   } else {
     throw new Apierror(400, "Invalid status for posting an answer");
   }
-
-  await q.save();
-  if (q.status === "answered") {
-    notifyStatusChange(q, "answered").catch(() => {});
-  }
-  return res
-    .status(200)
-    .json(new Apiresponse(200, q, "Answer posted successfully"));
 });
 
 // Asker posts follow-up (within 48h window)
@@ -609,6 +625,24 @@ export const postFollowUp = asynchandler(async (req, res) => {
     new Date() > new Date(q.thread.followUpWindowExpiresAt)
   )
     throw new Apierror(400, "Follow-up window expired");
+
+
+  const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS || "1");
+  if (q.thread.followUpCount >= MAX_FOLLOWUPS)
+    throw new Apierror(400, `Only ${MAX_FOLLOWUPS} follow-up(s) allowed per thread`);
+  
+  const unansweredFollowUp = q.thread.messages.some(
+    (m) => m.role === "asker" && m.isFollowUp &&
+    !q.thread.messages.some(
+      (m2) => m2.role === "professional" && m2.isFollowUp &&
+      m2.createdAt > m.createdAt
+    )
+  );
+  if (unansweredFollowUp)
+    throw new Apierror(400, "Please wait for the professional to answer your previous follow-up");
+
+    
+
   q.thread.messages.push({
     sender: req.user._id,
     role: "asker",
@@ -617,11 +651,12 @@ export const postFollowUp = asynchandler(async (req, res) => {
     isFollowUp: true,
   });
   q.status = "in_thread";
+  q.thread.followUpCount += 1;
   // q.timeline.push({
   //   at: new Date(),
   //   status: "in_thread",
   //   by: req.user._id,
-  //   note: "Follow-up question asked.",
+  //   note: `Follow-up question #${q.thread.followUpCount} asked.`,
   // });
   await q.save();
   notifyStatusChange(q, "in_thread").catch(() => {});
@@ -665,87 +700,11 @@ export const answerFollowUp = asynchandler(async (req, res) => {
     .json(new Apiresponse(200, q, "Follow-up answer posted"));
 });
 
-// Professional closes thread (payout logic)
-// export const closeThreadAndPayout = asynchandler(async (req, res) => {
-//   const { id } = req.params;
-//   const { body } = req.body;
-//   console.log(body)
-//   const q = await Question.findById(id).populate("professional");
-//   if (!q) throw new Apierror(404, "Question not found");
-//   if (q.status === "closed") throw new Apierror(400, "Already closed");
-//   if (!q.payment.paid) throw new Apierror(400, "Not paid");
-//   if (String(q.professional._id) !== String(req.user.professional._id))
-//     throw new Apierror(403, "Not professional");
-
-//   const now = new Date();
-//   let totalFeePercent = PLATFORM_FEE_PERCENT;
-//   let penalty = false;
-//   if (now < q.thread.followUpWindowExpiresAt) {
-//     totalFeePercent += EARLY_CLOSE_PENALTY_PERCENT;
-//     q.thread.threadClosedEarlier = true;
-//     penalty = true;
-//   }
-//   const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
-//   console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
-//   q.status = "closed";
-//   q.thread.closedAt = now;
-//   q.thread.messages.push({
-//       sender: req.user._id,
-//       role: "professional",
-//       body: body,
-//       attachments:[],
-//       isFollowUp: false,
-//   });
-//   q.timeline.push({
-//     at: new Date(),
-//     status: "closed",
-//     by: req.user._id,
-//     note: "Thread closed by professional. " + (body ? `Note: ${body}` : ""),
-//   });
-
-//   await q.save();
-
-//   if (q.professional.professionalStripeId) {
-//     await stripe.transfers.create({
-//       amount: Math.round(payoutAmount * 100),
-//       currency: "usd",
-//       destination: q.professional.professionalStripeId,
-//       metadata: { questionId: q._id.toString() },
-//     });
-//     console.log(
-//       `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
-//     );
-//   }else{
-//     await Professional.findByIdAndUpdate(q.professional._id, {
-//       $push: {
-//         pendingPayouts: {
-//           amount: payoutAmount,
-//           questionId: q._id,
-//           timestamp: new Date(),
-//           paid: false
-//         }
-//       }
-//     });
-//   }
-//   notifyStatusChange(q, "closed", body).catch(() => {});
-//   return res
-//     .status(200)
-//     .json(
-//       new Apiresponse(
-//         200,
-//         q,
-//         penalty
-//           ? "Thread closed early, payout deducted"
-//           : "Thread closed and payout sent"
-//       )
-//     );
-// });
 
 export const closeThreadAndPayout = asynchandler(async (req, res) => {
   const { id } = req.params;
   const { body } = req.body;
-  console.log("ye puri body ha",req.body)
-  console.log(body);
+
   const q = await Question.findById(id).populate("professional");
   if (!q) throw new Apierror(404, "Question not found");
   if (q.status === "closed") throw new Apierror(400, "Already closed");
@@ -754,126 +713,37 @@ export const closeThreadAndPayout = asynchandler(async (req, res) => {
     throw new Apierror(403, "Not professional");
 
   const now = new Date();
-  let totalFeePercent = PLATFORM_FEE_PERCENT;
-  let penalty = false;
-  if (now < q.thread.followUpWindowExpiresAt) {
-    totalFeePercent += EARLY_CLOSE_PENALTY_PERCENT;
+  let earlyClose = false;
+  if (q.thread.followUpWindowExpiresAt && now < q.thread.followUpWindowExpiresAt) {
     q.thread.threadClosedEarlier = true;
-    penalty = true;
+    earlyClose = true;
   }
-  const payoutAmount = Math.round(q.priceUSD * (1 - totalFeePercent / 100));
-  console.log(`Payout amount for question ${q._id} is $${payoutAmount} (fees)`);
+
+  const TOTAL_FEE = PLATFORM_FEE_PERCENT + (earlyClose ? EARLY_CLOSE_PENALTY_PERCENT : 0);
+  const payoutAmount = Math.round(q.priceUSD * (1 - TOTAL_FEE / 100));
 
   q.status = "closed";
   q.thread.closedAt = now;
   q.timeline.push({
-    at: new Date(),
+    at: now,
     status: "closed",
     by: req.user._id,
-    note: "Thread closed by professional. " + (body ? `Note: ${body}` : ""),
+    note: "Thread closed by professional." + (body ? ` Note: ${body}` : ""),
   });
-
   await q.save();
 
-  // Attempt payout if stripe account exists; otherwise store pending payout.
-  if (q.professional.professionalStripeId) {
-    try {
-      // retrieve account and check payouts/capabilities before attempting transfer
-      const account = await stripe.accounts.retrieve(
-        q.professional.professionalStripeId
-      );
-
-      const payoutsEnabled = !!account.payouts_enabled;
-      const transfersActive = account.capabilities?.transfers === "active";
-
-      if (payoutsEnabled && transfersActive) {
-        try {
-          await stripe.transfers.create({
-            amount: Math.round(payoutAmount * 100),
-            currency: "usd",
-            destination: q.professional.professionalStripeId,
-            metadata: { questionId: q._id.toString() },
-          });
-          console.log(
-            `Initiating payout of $${payoutAmount} to professional ${q.professional._id}`
-          );
-        } catch (txErr) {
-          // transfer failed -> fallback to pendingPayouts
-          console.error(
-            `Stripe transfer failed for question ${q._id}, saving to pendingPayouts:`,
-            txErr
-          );
-          await Professional.findByIdAndUpdate(q.professional._id, {
-            $push: {
-              pendingPayouts: {
-                amount: payoutAmount,
-                questionId: q._id,
-                timestamp: new Date(),
-                paid: false,
-              },
-            },
-          });
-        }
-      } else {
-        // account not ready for payouts -> store pending payout instead of throwing
-        console.log(
-          `Stripe account ${q.professional.professionalStripeId} not ready (payoutsEnabled=${payoutsEnabled}, transfersActive=${transfersActive}). Saving payout to pendingPayouts.`
-        );
-        await Professional.findByIdAndUpdate(q.professional._id, {
-          $push: {
-            pendingPayouts: {
-              amount: payoutAmount,
-              questionId: q._id,
-              timestamp: new Date(),
-              paid: false,
-            },
-          },
-        });
-      }
-    } catch (accErr) {
-      // failed to retrieve account or other stripe error -> fallback to pendingPayouts
-      console.error(
-        `Error checking Stripe account for professional ${q.professional._id}. Saving payout to pendingPayouts.`,
-        accErr
-      );
-      await Professional.findByIdAndUpdate(q.professional._id, {
-        $push: {
-          pendingPayouts: {
-            amount: payoutAmount,
-            questionId: q._id,
-            timestamp: new Date(),
-            paid: false,
-          },
-        },
-      });
-    }
-  } else {
-    // no stripe id -> store pending payout
-    await Professional.findByIdAndUpdate(q.professional._id, {
-      $push: {
-        pendingPayouts: {
-          amount: payoutAmount,
-          questionId: q._id,
-          timestamp: new Date(),
-          paid: false,
-        },
-      },
-    });
-  }
+  await executePayout(q, payoutAmount, earlyClose);
 
   notifyStatusChange(q, "closed", body).catch(() => {});
-  return res
-    .status(200)
-    .json(
-      new Apiresponse(
-        200,
-        q,
-        penalty
-          ? "Thread closed early, payout deducted"
-          : "Thread closed and payout sent"
-      )
-    );
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      q,
+      earlyClose ? "Thread closed early, payout deducted" : "Thread closed and payout sent"
+    )
+  );
 });
+
 
 export const submitFeedback = asynchandler(async (req, res) => {
   const { id } = req.params;
@@ -1172,12 +1042,12 @@ export const flagQuestion = asynchandler(async (req, res) => {
   
 
   // Notify admins via email
-  // try {
-  //   await notifyAdminsAboutFlaggedQuestion(question, isAsker ? "asker" : "professional", reason);
-  // } catch (err) {
-  //   console.error("Failed to send notification about flagged question:", err);
-  //   // Continue execution even if email fails
-  // }
+  try {
+    await notifyAdminsAboutFlaggedQuestion(question, isAsker ? "asker" : "professional", reason);
+  } catch (err) {
+    console.error("Failed to send notification about flagged question:", err);
+    // Continue execution even if email fails
+  }
 
   return res
     .status(200)
@@ -1244,9 +1114,9 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
 
     question.flagging.isFlagged = false;
 
-    // Notify professional
-    // await notifyStatusChange(question, "flag_reviewed_reanswer",
-    //   `An administrator has reviewed this flagged question and requests that you provide a new answer. ${note || ""}`);
+    // Notify professional and asker
+    notifyStatusChange(question, "flag_reviewed_reanswer",
+      `An administrator has reviewed this flagged question and requests that you provide a new answer. ${note || ""}`).catch(() => {});
   } else if (action === "refund") {
     // Process refund logic here if payment was made
     if (question.payment?.paid) {
@@ -1270,8 +1140,8 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
     }
 
     // Notify both parties
-    // await notifyStatusChange(question, "flag_reviewed_refund",
-    //   `An administrator has reviewed this flagged question and approved a refund. ${note || ""}`);
+    notifyStatusChange(question, "flag_reviewed_refund",
+      `An administrator has reviewed this flagged question and approved a refund. ${note || ""}`).catch(() => {});
   } else if (action === "no_action") {
     // Simply resolve the flag without changes
     question.flagging.isFlagged = false;
@@ -1288,41 +1158,11 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
     });
 
     // Notify parties
-    // await notifyStatusChange(question, "flag_reviewed_no_action",
-    //   `An administrator has reviewed this flagged question and determined no action is needed. ${note || ""}`);
+    notifyStatusChange(question, "flag_reviewed_no_action",
+      `An administrator has reviewed this flagged question and determined no action is needed. ${note || ""}`).catch(() => {});
   }
 
   await question.save();
-
-  // try {
-  //   const professionalPopulated = await Professional.findById(question.professional._id).populate("user");
-  //   const askerPopulated = await Users.findById(question.asker._id);
-  //   // await question.populate("asker");
-
-  //   // Notify professional
-  //   if (professionalPopulated?.user?.email) {
-  //     sendQuestionStatusEmail({
-  //       recipientType: "professional",
-  //       status: emailStatus,
-  //       question,
-  //       recipient: professionalPopulated.user,
-  //       customMessage: note ? `Administrator's note: ${note}` : undefined,
-  //     }).catch((err) => console.error("Email to professional failed:", err));
-  //   }
-
-  //   // Notify asker
-  //   if (askerPopulated?.user?.email) {
-  //     sendQuestionStatusEmail({
-  //       recipientType: "asker",
-  //       status: emailStatus,
-  //       question,
-  //       recipient: question.asker,
-  //       customMessage: note ? `Administrator's note: ${note}` : undefined,
-  //     }).catch((err) => console.error("Email to asker failed:", err));
-  //   }
-  // } catch (err) {
-  //   console.error("Failed to send notification about flagged question review:", err);
-  // }
 
 
   return res
@@ -1334,4 +1174,43 @@ export const reviewFlaggedQuestion = asynchandler(async (req, res) => {
         `Flagged question reviewed, action: ${action}`
       )
     );
+});
+
+export const getAllFlaggedQuestions = asynchandler(async (req, res) => {
+  const { page = 1, limit = 10, search = "" } = req.query;
+
+  const filter = { "flagging.isFlagged": true };
+
+  if (search) {
+    filter.$or = [
+      { title: { $regex: search, $options: "i" } },
+      { body: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const total = await Question.countDocuments(filter);
+  const questions = await Question.find(filter)
+    .sort({ "flagging.flaggedAt": -1 })
+    .skip(skip)
+    .limit(parseInt(limit))
+    .populate({
+      path: "professional",
+      populate: { path: "user", select: "firstName lastName" },
+    })
+    .populate({ path: "asker", select: "firstName lastName" });
+
+  return res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        questions,
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit),
+      },
+      "Flagged questions listed"
+    )
+  );
 });

@@ -9,6 +9,7 @@ import dashboardRoute from "./routes/Dashboard.routes.js";
 import questionRoute from "./routes/Question.route.js";
 import onboardingRoute from "./routes/Onboarding.route.js";
 import accountDeletionRoute from "./routes/AccountDelete.route.js"
+import invoicesRoute from "./routes/Invoice.route.js"
 // import { startAgenda } from "./jobs/agenda/AgendaScheduler.js";
 import dns from "dns"
 
@@ -19,7 +20,7 @@ dns.setServers(["1.1.1.1","8.8.8.8"])
 const app = express();
 
 app.use(cors({
-  origin:[process.env.FRONTEND_URL],
+  origin:[process.env.FRONTEND_URL,"https://askmedirect.com"],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
@@ -35,6 +36,11 @@ app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(express.static("public"));
 app.use(cookieParser());
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 app.use("/api/users", userRoute);
 app.use("/api/users/payments", paymentRoute);
 app.use("/api/specializations", specializationRoute);
@@ -43,6 +49,7 @@ app.use("/api/admin/dashboard", dashboardRoute);
 app.use("/api/questions",questionRoute);
 app.use("/api/onboarding",onboardingRoute);
 app.use("/api/account",accountDeletionRoute);
+app.use("/api/invoices",invoicesRoute)
 
 
 app.use((err, req, res, next) => {

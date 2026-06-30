@@ -4,6 +4,7 @@ import { Users } from "../models/Users.model.js";
 import { Professional } from "../models/Professional.model.js";
 import { Asker } from "../models/Asker.model.js";
 import { Question } from "../models/Question.model.js";
+import { Invoice } from "../models/Invoice.model.js";
 import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -41,8 +42,8 @@ export const getDashboardStats = asynchandler(async (req, res) => {
         totalPlatformEarnings,
         avgRating,
       },
-      "Dashboard stats"
-    )
+      "Dashboard stats",
+    ),
   );
 });
 
@@ -51,10 +52,10 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
   if (!professionalId) throw new Apierror(403, "Not a professional");
 
   const PLATFORM_FEE_PERCENT = parseFloat(
-    process.env.PLATFORM_FEE_PERCENT || "12"
+    process.env.PLATFORM_FEE_PERCENT || "12",
   );
   const EARLY_CLOSE_PENALTY_PERCENT = parseFloat(
-    process.env.EARLY_CLOSE_PENALTY_PERCENT || "3"
+    process.env.EARLY_CLOSE_PENALTY_PERCENT || "3",
   );
 
   const activeQuestions = await Question.countDocuments({
@@ -137,7 +138,7 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
       // log and treat as not ready for payouts
       console.error(
         `Failed to retrieve Stripe account for professional ${prof._id}:`,
-        err
+        err,
       );
       payoutsEnabled = false;
       transfersActive = false;
@@ -167,11 +168,11 @@ export const getProfessionalDashboardStats = asynchandler(async (req, res) => {
         },
         totalEarnings: netReceived,
         shareUrl: `${process.env.FRONTEND_URL}/profile/${normalize(
-          prof.user.firstName
+          prof.user.firstName,
         )}_${normalize(prof.user.lastName)}`,
       },
-      "Dashboard stats"
-    )
+      "Dashboard stats",
+    ),
   );
 });
 
@@ -225,10 +226,10 @@ export const getProfessionalPendingQuestions = asynchandler(
         new Apiresponse(
           200,
           { questions, total: totalQuestions },
-          "Pending questions"
-        )
+          "Pending questions",
+        ),
       );
-  }
+  },
 );
 
 export const listDashboardUsers = asynchandler(async (req, res) => {
@@ -318,6 +319,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       {
         $project: {
           _id: 1,
+          userId: "$user._id",
           name: { $concat: ["$user.firstName", " ", "$user.lastName"] },
           joinedDate: "$user.createdAt",
           email: "$user.email",
@@ -333,8 +335,17 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
           featured: "$featured",
           verified: "$verified",
           status: { $cond: [{ $eq: ["$user.isActive", true] }, true, false] },
+          isDeleted: { $ifNull: ["$user.isProDeleted", false] },
+          deletionScheduled: {
+            $cond: [
+              { $ifNull: ["$user.deletionScheduledAt", false] },
+              true,
+              false,
+            ],
+          },
+          deletionByAdmin: { $ifNull: ["$user.isProDeletedByAdmin", false] },
         },
-      }
+      },
     );
   } else {
     pipeline.push(
@@ -366,7 +377,7 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       {
         $project: {
           _id: 1,
-          userId:"$user._id",
+          userId: "$user._id",
           name: { $concat: ["$user.firstName", " ", "$user.lastName"] },
           joinedDate: "$user.createdAt",
           email: "$user.email",
@@ -380,8 +391,17 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
           },
           questionsAnswered: { $literal: 0 },
           status: { $cond: [{ $eq: ["$user.isActive", true] }, true, false] },
+          isDeleted: { $ifNull: ["$user.isAskerDeleted", false] },
+          deletionScheduled: {
+            $cond: [
+              { $ifNull: ["$user.deletionScheduledAt", false] },
+              true,
+              false,
+            ],
+          },
+          deletionByAdmin: { $ifNull: ["$user.isAskerDeletedByAdmin", false] },
         },
-      }
+      },
     );
   }
 
@@ -392,7 +412,126 @@ export const listDashboardUsers = asynchandler(async (req, res) => {
       new Apiresponse(
         200,
         { results: data, page: pageNum, limit: lim },
-        "Users list"
-      )
+        "Users list",
+      ),
     );
+});
+
+export const getInvoiceAnalytics = asynchandler(async (req, res) => {
+  const { page = 1, limit = 20 } = req.query;
+  const pageNum = Math.max(1, parseInt(page));
+  const lim = Math.max(1, Math.min(100, parseInt(limit)));
+  const skip = (pageNum - 1) * lim;
+
+  // Aggregate KPIs across all invoice types in one pass
+  // Note: platformFeeAmount/penaltyAmount are stored on payout invoices, not payment_received
+  const [facetResult] = await Invoice.aggregate([
+    {
+      $facet: {
+        received: [
+          { $match: { type: "payment_received", status: "issued" } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              subtotalSum: { $sum: "$amounts.subtotal" },
+            },
+          },
+        ],
+        payoutSent: [
+          { $match: { type: "payout_sent", status: "issued" } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              totalPaidOut: { $sum: "$amounts.total" },
+              platformFees: { $sum: "$amounts.platformFeeAmount" },
+              penaltyFees: { $sum: "$amounts.penaltyAmount" },
+            },
+          },
+        ],
+        payoutPending: [
+          { $match: { type: "payout_pending", status: "issued" } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              totalPending: { $sum: "$amounts.total" },
+              platformFees: { $sum: "$amounts.platformFeeAmount" },
+              penaltyFees: { $sum: "$amounts.penaltyAmount" },
+            },
+          },
+        ],
+      },
+    },
+  ]).allowDiskUse(true);
+
+  // Monthly platform fee revenue for the last 12 calendar months
+  // Fees are on payout_sent + payout_pending invoices; payment count from payment_received
+  const now = new Date();
+  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+  const monthlyRevenue = await Invoice.aggregate([
+    {
+      $match: {
+        type: { $in: ["payout_sent", "payout_pending"] },
+        status: "issued",
+        createdAt: { $gte: twelveMonthsAgo },
+      },
+    },
+    {
+      $group: {
+        _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+        platformFees: { $sum: "$amounts.platformFeeAmount" },
+        penaltyFees: { $sum: "$amounts.penaltyAmount" },
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { "_id.year": 1, "_id.month": 1 } },
+  ]).allowDiskUse(true);
+
+  // Recent invoices with pagination
+  const [recentInvoices, totalInvoices] = await Promise.all([
+    Invoice.find({ status: "issued" })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(lim)
+      .populate("question", "title")
+      .lean(),
+    Invoice.countDocuments({ status: "issued" }),
+  ]);
+
+  const r = facetResult.received[0] || {};
+  const s = facetResult.payoutSent[0] || {};
+  const p = facetResult.payoutPending[0] || {};
+
+  const platformFeeRevenue = (s.platformFees || 0) + (p.platformFees || 0);
+  const penaltyFeeRevenue = (s.penaltyFees || 0) + (p.penaltyFees || 0);
+
+  res.status(200).json(
+    new Apiresponse(
+      200,
+      {
+        kpi: {
+          totalInvoices,
+          grossRevenue: r.subtotalSum || 0,
+          platformFeeRevenue,
+          penaltyFeeRevenue,
+          totalNetRevenue: platformFeeRevenue + penaltyFeeRevenue,
+          totalPayoutsSent: s.totalPaidOut || 0,
+          totalPayoutsPending: p.totalPending || 0,
+          paymentReceivedCount: r.count || 0,
+          payoutSentCount: s.count || 0,
+          payoutPendingCount: p.count || 0,
+        },
+        monthlyRevenue,
+        recentInvoices,
+        total: totalInvoices,
+        page: pageNum,
+        limit: lim,
+        totalPages: Math.ceil(totalInvoices / lim),
+      },
+      "Invoice analytics",
+    ),
+  );
 });

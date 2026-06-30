@@ -103,10 +103,12 @@ const QuestionSchema = new mongoose.Schema(
       default: "submitted",
       index: true,
     },
+    payoutInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice", default: null },
     thread: {
       messages: [MessageSchema],
       followUpWindowExpiresAt: Date,
       closedAt: Date,
+      followUpCount: { type: Number, default: 0 },
       threadClosedEarlier: { type: Boolean, default: false },
     },
     timeline: [
